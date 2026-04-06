@@ -1,0 +1,46 @@
+model:
+  text_encoder: "paraphrase-multilingual-MiniLM-L12-v2"
+  image_encoder: "openai/clip-vit-base-patch32"
+  text_dim: 384
+  image_dim: 512
+  fusion_dim: 256
+  fusion_strategy: "projection"  # "concat" or "projection"
+
+training:
+  batch_size: 16
+  epochs: 5
+  lr: 2.0e-5
+  warmup_steps: 100
+  margin: 0.3          # triplet loss margin
+  checkpoint_dir: "checkpoints"
+  log_every: 20
+  eval_every: 100
+  loss: "triplet"      # "triplet" or "contrastive"
+
+retrieval:
+  top_k_candidates: 100
+  index_type: "flat"   # "flat" (exact) or "ivf" (approx, faster for large scale)
+  n_probe: 10          # for IVF index
+
+reranking:
+  top_k_final: 10
+  batch_size: 16
+  model_type: "multimodal"  # "cross_encoder" or "multimodal"
+  hidden_dim: 256
+
+data:
+  image_size: 224
+  max_text_length: 128
+  train_path: "data/processed/train.jsonl"
+  val_path: "data/processed/val.jsonl"
+  catalog_path: "data/processed/catalog.jsonl"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+
+logging:
+  level: "INFO"
+  experiment_name: "multimodal_matching"
+  log_dir: "logs"

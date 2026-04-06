@@ -1,0 +1,46 @@
+model:
+  text_encoder: "paraphrase-multilingual-MiniLM-L12-v2"
+  image_encoder: "openai/clip-vit-base-patch32"
+  text_dim: 384
+  image_dim: 512
+  fusion_dim: 256
+  fusion_strategy: "projection"
+
+training:
+  batch_size: 32
+  epochs: 3
+  lr: 5.0e-6             # lower LR for fine-tuning
+  warmup_steps: 20
+  margin: 0.3
+  checkpoint_dir: "checkpoints"
+  log_every: 10
+  eval_every: 50
+  loss: "triplet"
+
+retrieval:
+  top_k_candidates: 100
+  index_type: "flat"
+  n_probe: 10
+
+reranking:
+  top_k_final: 10
+  batch_size: 16
+  model_type: "multimodal"
+  hidden_dim: 256
+
+data:
+  image_size: 224
+  max_text_length: 128
+  train_path: "data/processed/adv_train.jsonl"
+  val_path: "data/processed/adv_val.jsonl"
+  catalog_path: "data/processed/catalog.jsonl"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+
+logging:
+  level: "INFO"
+  experiment_name: "multimodal_matching_adversarial"
+  log_dir: "logs"

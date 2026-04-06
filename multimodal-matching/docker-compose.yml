@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  # ── API server ─────────────────────────────────────────────────────────────
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - CONFIG_PATH=/app/configs/config.yaml
+      - INDEX_PATH=/app/models/faiss_index
+      - BIENCODER_CKPT=/app/checkpoints/biencoder/checkpoint_best.pt
+      - RERANKER_CKPT=/app/checkpoints/reranker/checkpoint_best.pt
+    restart: unless-stopped
+
+  # ── One-shot index builder (run then exit) ─────────────────────────────────
+  build-index:
+    build: .
+    command: python scripts/build_index.py
+      --catalog data/processed/catalog.jsonl
+      --output  models/faiss_index
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    profiles: ["tools"]   # only runs with: docker compose --profile tools up build-index
+
+  # ── One-shot trainer ────────────────────────────────────────────────────────
+  train:
+    build: .
+    command: python scripts/train.py --model both
+    volumes:
+      - ./models:/app/models
+      - ./checkpoints:/app/checkpoints
+      - ./data:/app/data
+      - ./logs:/app/logs
+    profiles: ["tools"]
