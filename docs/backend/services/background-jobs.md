@@ -1,8 +1,8 @@
-# Background Jobs (Supabase Edge Functions)
+# Background Jobs (NestJS Scheduled Tasks)
 
-> Runtime: Deno (Supabase Edge Functions)
-> Trigger: Cron schedule (configured in Supabase Dashboard)
-> Location in repo: `supabase/functions/`
+> Runtime: NestJS (`@nestjs/schedule` — node-cron under the hood)
+> Location: `backend/src/scheduler/scheduler.service.ts`
+> No separate process needed — runs inside the NestJS app
 
 ---
 
@@ -10,180 +10,202 @@
 
 Four jobs handle all time-based state transitions. They are the only processes that mutate objects based on time rather than user action.
 
-| Function | Cron | What it does |
-|----------|------|-------------|
-| `expire-demands` | `0 * * * *` (every hour) | Sets expired DemandRequests to `expired` |
-| `expire-listings` | `0 * * * *` (every hour) | Sets expired ProductListings to `expired` |
-| `expire-offers` | `*/15 * * * *` (every 15 min) | Sets expired pending Offers to `expired` |
-| `close-inactive-conversations` | `0 */6 * * *` (every 6 hours) | Closes conversations past `auto_close_at`; sends warning at -2 days |
+| Job method | Cron | What it does |
+|-----------|------|-------------|
+| `expireDemands()` | `0 * * * *` (every hour) | Sets expired DemandRequests to `expired` |
+| `expireListings()` | `0 * * * *` (every hour) | Sets expired ProductListings to `expired` |
+| `expireOffers()` | `*/15 * * * *` (every 15 min) | Sets expired pending Offers to `expired` |
+| `closeInactiveConversations()` | `0 */6 * * *` (every 6 hours) | Closes conversations past `auto_close_at`; sends warning at -2 days |
 
 ---
 
-## expire-demands
+## Module Setup
 
 ```typescript
-// supabase/functions/expire-demands/index.ts
-import { createClient } from '@supabase/supabase-js'
+// backend/src/scheduler/scheduler.module.ts
+import { Module }          from '@nestjs/common'
+import { ScheduleModule }  from '@nestjs/schedule'
+import { SchedulerService } from './scheduler.service'
+import { PrismaModule }    from '../prisma/prisma.module'
+import { NotificationsModule } from '../notifications/notifications.module'
 
-Deno.serve(async () => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  const { error, count } = await supabase
-    .from('demand_requests')
-    .update({ status: 'expired' })
-    .lt('expires_at', new Date().toISOString())
-    .not('status', 'in', '("expired","cancelled","fulfilled")')
-    .select('id', { count: 'exact' })
-
-  console.log(`expire-demands: ${count} updated, error: ${error?.message ?? 'none'}`)
-  return new Response(JSON.stringify({ count, error }), { status: error ? 500 : 200 })
+@Module({
+  imports: [
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    NotificationsModule,
+  ],
+  providers: [SchedulerService],
 })
+export class SchedulerModule {}
+```
+
+Register in `AppModule`:
+
+```typescript
+// backend/src/app.module.ts
+imports: [
+  // ...
+  SchedulerModule,
+]
 ```
 
 ---
 
-## expire-listings
+## expireDemands
 
 ```typescript
-// supabase/functions/expire-listings/index.ts
-import { createClient } from '@supabase/supabase-js'
+// backend/src/scheduler/scheduler.service.ts
+import { Injectable, Logger } from '@nestjs/common'
+import { Cron }               from '@nestjs/schedule'
+import { PrismaService }      from '../prisma/prisma.service'
 
-Deno.serve(async () => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
+@Injectable()
+export class SchedulerService {
+  private readonly logger = new Logger(SchedulerService.name)
 
-  const { error, count } = await supabase
-    .from('product_listings')
-    .update({ status: 'expired' })
-    .lt('expires_at', new Date().toISOString())
-    .not('status', 'in', '("expired","sold","removed")')
-    .select('id', { count: 'exact' })
+  constructor(
+    private prisma:         PrismaService,
+    private notifications:  NotificationsService,
+  ) {}
 
-  console.log(`expire-listings: ${count} updated, error: ${error?.message ?? 'none'}`)
-  return new Response(JSON.stringify({ count, error }), { status: error ? 500 : 200 })
-})
+  @Cron('0 * * * *')
+  async expireDemands() {
+    const result = await this.prisma.demandRequest.updateMany({
+      where: {
+        expiresAt: { lt: new Date() },
+        status:    { notIn: ['expired', 'cancelled', 'fulfilled'] },
+      },
+      data: { status: 'expired' },
+    })
+    this.logger.log(`expireDemands: ${result.count} updated`)
+  }
 ```
 
 ---
 
-## expire-offers
+## expireListings
 
 ```typescript
-// supabase/functions/expire-offers/index.ts
-import { createClient } from '@supabase/supabase-js'
-
-Deno.serve(async () => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  const { error, count } = await supabase
-    .from('offers')
-    .update({ status: 'expired' })
-    .lt('expires_at', new Date().toISOString())
-    .eq('status', 'pending')
-    .select('id', { count: 'exact' })
-
-  console.log(`expire-offers: ${count} updated, error: ${error?.message ?? 'none'}`)
-  return new Response(JSON.stringify({ count, error }), { status: error ? 500 : 200 })
-})
+  @Cron('0 * * * *')
+  async expireListings() {
+    const result = await this.prisma.productListing.updateMany({
+      where: {
+        expiresAt: { lt: new Date() },
+        status:    { notIn: ['expired', 'sold', 'removed'] },
+      },
+      data: { status: 'expired' },
+    })
+    this.logger.log(`expireListings: ${result.count} updated`)
+  }
 ```
 
 ---
 
-## close-inactive-conversations
+## expireOffers
 
-This function does two things:
-1. Sends a warning notification to conversations that will auto-close in 2 days.
+```typescript
+  @Cron('*/15 * * * *')
+  async expireOffers() {
+    const result = await this.prisma.offer.updateMany({
+      where: {
+        expiresAt: { lt: new Date() },
+        status:    'pending',
+      },
+      data: { status: 'expired' },
+    })
+    this.logger.log(`expireOffers: ${result.count} updated`)
+  }
+```
+
+---
+
+## closeInactiveConversations
+
+This job does two things:
+1. Warns conversations that will auto-close in 2 days (in-app notification).
 2. Closes conversations that have passed `auto_close_at`.
 
 ```typescript
-// supabase/functions/close-inactive-conversations/index.ts
-import { createClient } from '@supabase/supabase-js'
+  @Cron('0 */6 * * *')
+  async closeInactiveConversations() {
+    const now          = new Date()
+    const twoDaysLater = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000)
 
-Deno.serve(async () => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
+    // 1. Close conversations past auto_close_at
+    const closed = await this.prisma.conversation.updateMany({
+      where: {
+        autoCloseAt: { lt: now },
+        status:      'active',
+      },
+      data: { status: 'closed', closeReason: 'expired' },
+    })
 
-  const now          = new Date()
-  const twoDaysLater = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000)
+    // 2. Warn conversations closing within 2 days
+    const soonClosing = await this.prisma.conversation.findMany({
+      where: {
+        autoCloseAt: { lt: twoDaysLater, gt: now },
+        status:      'active',
+      },
+      select: { id: true, buyerUserId: true, sellerUserId: true },
+    })
 
-  // 1. Close conversations past auto_close_at
-  const { error: closeError, count: closedCount } = await supabase
-    .from('conversations')
-    .update({ status: 'closed', close_reason: 'expired' })
-    .lt('auto_close_at', now.toISOString())
-    .eq('status', 'active')
-    .select('id', { count: 'exact' })
-
-  // 2. Warn conversations closing within 2 days
-  // (In MVP: fetch them and call notify() for each participant)
-  const { data: soonClosing } = await supabase
-    .from('conversations')
-    .select('id, buyer_user_id, seller_user_id')
-    .lt('auto_close_at', twoDaysLater.toISOString())
-    .gt('auto_close_at', now.toISOString())
-    .eq('status', 'active')
-
-  // Notify each participant of the upcoming close
-  for (const conv of soonClosing ?? []) {
-    for (const userId of [conv.buyer_user_id, conv.seller_user_id]) {
-      await supabase.from('notifications').insert({
-        user_id:        userId,
-        type:           'conversation_closing_soon',
-        reference_type: 'conversation',
-        reference_id:   conv.id,
-        body:           'Your conversation will auto-close in 2 days due to inactivity.',
-        read:           false,
-      })
+    for (const conv of soonClosing) {
+      for (const userId of [conv.buyerUserId, conv.sellerUserId]) {
+        await this.notifications.notify({
+          userId,
+          type:          'conversation_closing_soon',
+          referenceType: 'conversation',
+          referenceId:   conv.id,
+          body:          'Your conversation will auto-close in 2 days due to inactivity.',
+        })
+      }
     }
-  }
 
-  console.log(`close-inactive-conversations: closed ${closedCount}, warned ${soonClosing?.length ?? 0}`)
-  return new Response(
-    JSON.stringify({ closedCount, warnedCount: soonClosing?.length }),
-    { status: closeError ? 500 : 200 }
-  )
-})
+    this.logger.log(
+      `closeInactiveConversations: closed ${closed.count}, warned ${soonClosing.length}`
+    )
+  }
+}
 ```
 
 ---
 
-## Deploying Edge Functions
+## Cron Expression Reference
+
+| Expression | Human description |
+|-----------|-------------------|
+| `0 * * * *` | Every hour at minute 0 |
+| `*/15 * * * *` | Every 15 minutes |
+| `0 */6 * * *` | Every 6 hours (00:00, 06:00, 12:00, 18:00) |
+
+---
+
+## Running in Development
+
+The scheduler starts automatically with the NestJS app:
 
 ```bash
-# Install Supabase CLI
-npm install -g supabase
-
-# Login
-supabase login
-
-# Deploy all functions
-supabase functions deploy expire-demands
-supabase functions deploy expire-listings
-supabase functions deploy expire-offers
-supabase functions deploy close-inactive-conversations
+cd backend
+npm run dev
+# Logs will show: [SchedulerService] expireDemands: 0 updated
 ```
+
+To trigger a job manually during development, call the service method directly from a controller or use a temporary test endpoint.
 
 ---
 
-## Setting Cron Schedules
+## Testing Jobs
 
-In the Supabase Dashboard: **Edge Functions → [function name] → Schedules → Add schedule**
+Since these methods use `prisma.updateMany`, they can be unit-tested by mocking `PrismaService`:
 
-| Function | Schedule expression | Human description |
-|----------|--------------------|--------------------|
-| expire-demands | `0 * * * *` | Every hour at minute 0 |
-| expire-listings | `0 * * * *` | Every hour at minute 0 |
-| expire-offers | `*/15 * * * *` | Every 15 minutes |
-| close-inactive-conversations | `0 */6 * * *` | Every 6 hours |
-
-All functions use the service role key from `SUPABASE_SERVICE_ROLE_KEY` (set in Supabase Dashboard under Edge Functions → Secrets).
+```typescript
+it('expireDemands should update expired demands', async () => {
+  prisma.demandRequest.updateMany.mockResolvedValue({ count: 3 })
+  await service.expireDemands()
+  expect(prisma.demandRequest.updateMany).toHaveBeenCalledWith({
+    where: expect.objectContaining({ status: { notIn: ['expired', 'cancelled', 'fulfilled'] } }),
+    data:  { status: 'expired' },
+  })
+})
+```

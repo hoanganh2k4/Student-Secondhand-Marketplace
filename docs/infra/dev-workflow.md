@@ -116,10 +116,6 @@ All Prisma commands run from `backend/`:
 npm run db:migrate          # create + apply migration
 npm run db:generate         # regenerate Prisma client
 
-# After generate, sync schema to frontend (Prisma client used by frontend too)
-cp prisma/schema.prisma ../frontend/prisma/schema.prisma
-cd ../frontend && npm run db:generate
-
 npm run db:studio           # browse DB in GUI (http://localhost:5555)
 npm run db:migrate:deploy   # apply migrations in production
 ```

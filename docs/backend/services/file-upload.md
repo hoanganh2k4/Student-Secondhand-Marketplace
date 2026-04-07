@@ -1,117 +1,186 @@
 # File Upload and Proof Asset Management
 
-> Route: `POST /api/upload`
-> Storage: Supabase Storage, bucket `proof-assets`
+> Route: `POST /upload` (NestJS, port 4000)
+> Storage: MinIO (Docker, S3-compatible) — bucket `proof-assets`
 > Record: Creates a `ProofAsset` row in the database after upload
 
 ---
 
 ## Upload Flow
 
-1. Client sends `multipart/form-data` to `POST /api/upload`.
-2. Server validates file type and size.
-3. File is uploaded to Supabase Storage under `{userId}/{timestamp}-{filename}`.
-4. A `ProofAsset` record is created in the database with the public URL.
+1. Client sends `multipart/form-data` to `POST /api/upload` (NestJS).
+2. NestJS validates file type and size via `FileInterceptor`.
+3. File is streamed to MinIO under `{userId}/{timestamp}-{filename}`.
+4. A `ProofAsset` record is created in the database with the MinIO URL.
 5. The `ProofAsset` object is returned to the client.
 
 ---
 
-## Upload Route
+## Upload Controller
 
 ```typescript
-// app/api/upload/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/utils/auth'
+// backend/src/upload/upload.controller.ts
+import {
+  Controller, Post, UploadedFile, UseGuards,
+  UseInterceptors, Request, BadRequestException,
+} from '@nestjs/common'
+import { FileInterceptor }  from '@nestjs/platform-express'
+import { JwtAuthGuard }     from '../auth/guards/jwt-auth.guard'
+import { UploadService }    from './upload.service'
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4']
-const MAX_SIZE = {
-  photo: 10 * 1024 * 1024,  // 10 MB
-  video: 50 * 1024 * 1024,  // 50 MB
-}
+const MAX_PHOTO_SIZE = 10 * 1024 * 1024  // 10 MB
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024  // 50 MB
 
-export async function POST(req: NextRequest) {
-  const user = await requireAuth()
-  const formData = await req.formData()
+@Controller('upload')
+@UseGuards(JwtAuthGuard)
+export class UploadController {
+  constructor(private readonly uploadService: UploadService) {}
 
-  const file              = formData.get('file') as File
-  const context           = formData.get('context') as string            // 'initial_listing' | 'evidence_response' | 'demand_reference'
-  const parentListingId   = formData.get('parentListingId') as string | null
-  const evidenceRequestId = formData.get('evidenceRequestId') as string | null
+  @Post()
+  @UseInterceptors(FileInterceptor('file'))
+  async upload(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
+  ) {
+    if (!file) throw new BadRequestException('No file provided')
 
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    return NextResponse.json({ error: 'File type not allowed' }, { status: 400 })
-  }
-
-  const isVideo = file.type.startsWith('video')
-  const limit   = isVideo ? MAX_SIZE.video : MAX_SIZE.photo
-  if (file.size > limit) {
-    return NextResponse.json({ error: 'File too large' }, { status: 400 })
-  }
-
-  const supabase = createAdminClient()
-  const path     = `${user.id}/${Date.now()}-${file.name}`
-  const buffer   = Buffer.from(await file.arrayBuffer())
-
-  const { error: uploadError } = await supabase.storage
-    .from('proof-assets')
-    .upload(path, buffer, { contentType: file.type })
-
-  if (uploadError) {
-    return NextResponse.json({ error: uploadError.message }, { status: 500 })
-  }
-
-  const { data: { publicUrl } } = supabase.storage
-    .from('proof-assets')
-    .getPublicUrl(path)
-
-  const asset = await prisma.proofAsset.create({
-    data: {
-      uploaderUserId:    user.id,
-      assetType:         isVideo ? 'video' : 'photo',
-      fileUrl:           publicUrl,
-      context:           context as any,
-      parentListingId:   parentListingId ?? undefined,
-      evidenceRequestId: evidenceRequestId ?? undefined,
-      qualityScore:      90, // MVP: static; replace with image analysis in Phase 2
+    if (!ALLOWED_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException('File type not allowed')
     }
-  })
 
-  return NextResponse.json(asset, { status: 201 })
+    const isVideo = file.mimetype.startsWith('video/')
+    const limit   = isVideo ? MAX_VIDEO_SIZE : MAX_PHOTO_SIZE
+    if (file.size > limit) {
+      throw new BadRequestException('File too large')
+    }
+
+    return this.uploadService.upload(req.user.id, file, req.body)
+  }
 }
 ```
 
 ---
 
-## Supabase Storage Bucket Policy
+## Upload Service
 
-Bucket name: `proof-assets`
+```typescript
+// backend/src/upload/upload.service.ts
+import { Injectable }        from '@nestjs/common'
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { ConfigService }     from '@nestjs/config'
+import { PrismaService }     from '../prisma/prisma.service'
 
-| Operation | Policy |
-|-----------|--------|
-| Read | Any authenticated user (public reads within the app) |
-| Insert | Authenticated user; path must start with their `user_id/` |
-| Update | Not allowed |
-| Delete | Uploader (`uploaderUserId = auth.uid()`) or admin (service role) |
+@Injectable()
+export class UploadService {
+  private s3: S3Client
+  private bucket: string
 
-SQL policy for insert restriction:
+  constructor(
+    private config:  ConfigService,
+    private prisma:  PrismaService,
+  ) {
+    this.bucket = this.config.get('MINIO_BUCKET')!   // 'proof-assets'
+    this.s3 = new S3Client({
+      endpoint:         this.config.get('MINIO_ENDPOINT'),  // 'http://localhost:9000'
+      region:           'us-east-1',                        // any value for MinIO
+      credentials: {
+        accessKeyId:     this.config.get('MINIO_ACCESS_KEY')!,
+        secretAccessKey: this.config.get('MINIO_SECRET_KEY')!,
+      },
+      forcePathStyle: true,  // required for MinIO
+    })
+  }
 
-```sql
-CREATE POLICY "Users upload to own folder"
-ON storage.objects FOR INSERT
-TO authenticated
-WITH CHECK (
-  bucket_id = 'proof-assets'
-  AND (storage.foldername(name))[1] = auth.uid()::text
-);
+  async upload(
+    userId:  string,
+    file:    Express.Multer.File,
+    body:    { context?: string; parentListingId?: string; evidenceRequestId?: string }
+  ) {
+    const key       = `${userId}/${Date.now()}-${file.originalname}`
+    const isVideo   = file.mimetype.startsWith('video/')
+
+    await this.s3.send(new PutObjectCommand({
+      Bucket:      this.bucket,
+      Key:         key,
+      Body:        file.buffer,
+      ContentType: file.mimetype,
+    }))
+
+    const fileUrl = `${this.config.get('MINIO_ENDPOINT')}/${this.bucket}/${key}`
+
+    const asset = await this.prisma.proofAsset.create({
+      data: {
+        uploaderUserId:    userId,
+        assetType:         isVideo ? 'video' : 'photo',
+        fileUrl,
+        context:           body.context as any ?? 'initial_listing',
+        parentListingId:   body.parentListingId  ?? undefined,
+        evidenceRequestId: body.evidenceRequestId ?? undefined,
+        qualityScore:      90,  // MVP: static; Phase 2: image analysis
+      },
+    })
+
+    // Recompute completeness score if this asset belongs to a listing
+    if (asset.parentListingId) {
+      await this.recomputeProofCompleteness(asset.parentListingId)
+    }
+
+    return asset
+  }
+
+  private async recomputeProofCompleteness(listingId: string) {
+    const assets = await this.prisma.proofAsset.findMany({
+      where: { parentListingId: listingId, qualityScore: { gte: 30 } },
+    })
+
+    const photos = assets.filter(a => a.assetType === 'photo').length
+    const videos = assets.filter(a => a.assetType === 'video').length
+
+    let score = 0
+    if      (photos >= 3) score = 80
+    else if (photos === 2) score = 60
+    else if (photos === 1) score = 30
+
+    if (videos >= 1) score = Math.min(100, score + 20)
+
+    await this.prisma.productListing.update({
+      where: { id: listingId },
+      data:  { proofCompletenessScore: score },
+    })
+  }
+}
 ```
+
+---
+
+## MinIO Configuration
+
+MinIO runs as a Docker container (defined in `docker-compose.yml`):
+
+| Property | Value |
+|----------|-------|
+| API endpoint | `http://localhost:9000` |
+| Console UI | `http://localhost:9001` |
+| Default credentials | `minioadmin / minioadmin` |
+| Bucket | `proof-assets` (create on first run) |
+
+Create the bucket on first setup:
+
+```bash
+# Using MinIO Client (mc)
+mc alias set local http://localhost:9000 minioadmin minioadmin
+mc mb local/proof-assets
+mc anonymous set download local/proof-assets  # allow public reads
+```
+
+Or create it via the MinIO Console at `http://localhost:9001`.
 
 ---
 
 ## Proof Completeness Score
 
-`proof_completeness_score` on `ProductListing` is a 0–100 integer computed from the listing's proof assets. In MVP this is a simple rule:
+`proof_completeness_score` on `ProductListing` is a 0–100 integer computed from the listing's proof assets.
 
 | Condition | Score contribution |
 |-----------|-------------------|
@@ -119,37 +188,14 @@ WITH CHECK (
 | 1 photo, quality ≥ 30 | 30 |
 | 2 photos, quality ≥ 30 | 60 |
 | 3+ photos, quality ≥ 30 | 80 |
-| Includes at least 1 video | +20 |
-
-Update the score whenever a `ProofAsset` is added to a listing:
-
-```typescript
-// Called after ProofAsset is created for a listing
-async function recomputeProofCompleteness(listingId: string) {
-  const assets = await prisma.proofAsset.findMany({
-    where: { parentListingId: listingId, qualityScore: { gte: 30 } }
-  })
-  const photos = assets.filter(a => a.assetType === 'photo').length
-  const videos = assets.filter(a => a.assetType === 'video').length
-
-  let score = 0
-  if (photos >= 3) score = 80
-  else if (photos === 2) score = 60
-  else if (photos === 1) score = 30
-
-  if (videos >= 1) score = Math.min(100, score + 20)
-
-  await prisma.productListing.update({
-    where: { id: listingId },
-    data:  { proofCompletenessScore: score }
-  })
-}
-```
+| Includes at least 1 video | +20 (capped at 100) |
 
 A listing cannot be published (`draft → active`) if `proofCompletenessScore < 60`.
+
+The score is recomputed automatically in `UploadService.recomputeProofCompleteness()` after each upload.
 
 ---
 
 ## Phase 2: Real Quality Scoring
 
-Replace the static `qualityScore: 90` with a call to an image analysis API (e.g., Google Vision `SAFE_SEARCH_DETECTION` + blur/brightness heuristics). This runs asynchronously after upload and patches the `ProofAsset` record.
+Replace the static `qualityScore: 90` with a call to Florence-2-base or a vision API for blur/brightness/NSFW detection. This runs asynchronously after upload (via a queue) and patches the `ProofAsset.qualityScore` field, then triggers a score recompute.

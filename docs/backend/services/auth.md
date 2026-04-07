@@ -1,158 +1,250 @@
 # Authentication and Authorization
 
-> Provider: Supabase Auth
-> Auth method: Magic link (email, no password)
-> Restriction: University email domains only
+> Provider: Self-hosted JWT (NestJS)
+> Auth methods: Magic link (email OTP) + password
+> Restriction: University email domains only (enforced server-side)
+
+---
+
+## Overview
+
+Auth lives entirely in the NestJS backend (`backend/src/auth/`). The frontend never touches JWTs directly — it reads/writes an `access_token` httpOnly cookie set by the NestJS response.
+
+| Flow | Description |
+|------|-------------|
+| Magic link | User enters email → NestJS sends a time-limited signed token via Resend/Mailhog → user clicks link → token validated → JWT issued |
+| Password login | User enters email + password → NestJS validates bcrypt hash → JWT issued |
+| Set password | After magic-link login, user can set a password for future logins |
+
+---
+
+## Token Issuance
+
+On successful auth (magic link click or password login), NestJS calls `issueTokens()`:
+
+```typescript
+// backend/src/auth/auth.service.ts
+async issueTokens(userId: string) {
+  const payload = { sub: userId }
+  const accessToken = this.jwt.sign(payload, {
+    secret:    this.config.get('JWT_SECRET'),
+    expiresIn: '7d',
+  })
+  return { accessToken }
+}
+```
+
+The controller sets the cookie:
+
+```typescript
+// backend/src/auth/auth.controller.ts
+@Post('login')
+async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+  const { accessToken } = await this.authService.login(dto.email, dto.password)
+  res.cookie('access_token', accessToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure:   process.env.NODE_ENV === 'production',
+    maxAge:   7 * 24 * 60 * 60 * 1000,  // 7 days in ms
+  })
+  return { ok: true }
+}
+```
+
+---
+
+## JWT Guard
+
+All protected NestJS routes use `JwtAuthGuard`:
+
+```typescript
+// backend/src/auth/guards/jwt-auth.guard.ts
+import { AuthGuard } from '@nestjs/passport'
+export class JwtAuthGuard extends AuthGuard('jwt') {}
+```
+
+The JWT strategy reads the token from the `access_token` cookie:
+
+```typescript
+// backend/src/auth/strategies/jwt.strategy.ts
+import { PassportStrategy } from '@nestjs/passport'
+import { Strategy, ExtractJwt } from 'passport-jwt'
+import { Request } from 'express'
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(config: ConfigService, private prisma: PrismaService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        (req: Request) => req?.cookies?.['access_token'] ?? null,
+      ]),
+      secretOrKey: config.get('JWT_SECRET'),
+    })
+  }
+
+  async validate(payload: { sub: string }) {
+    const user = await this.prisma.user.findUnique({
+      where:   { id: payload.sub },
+      include: { buyerProfile: true, sellerProfile: true },
+    })
+    if (!user) throw new UnauthorizedException()
+    return user   // attached as req.user
+  }
+}
+```
+
+Usage in any controller:
+
+```typescript
+@UseGuards(JwtAuthGuard)
+@Get('me')
+getMe(@Request() req: any) {
+  return req.user   // full User with profiles (passwordHash stripped by UsersService)
+}
+```
 
 ---
 
 ## University Email Restriction
 
-Enforced at two independent levels so neither can be bypassed alone.
-
-**Level 1 — Supabase Auth hook (signup):**
-A `before_user_created` hook validates the email domain against an `allowed_domains` table before the Supabase account is created. Configure this in the Supabase Dashboard under Auth > Hooks.
-
-**Level 2 — Next.js Middleware:**
-`middleware.ts` checks `session.user.email` domain on every request to a protected route. If the domain is not in `ALLOWED_EMAIL_DOMAINS`, the session is signed out and the user is redirected to `/login?error=domain`.
+Enforced in `AuthService.sendMagicLink()` before the email is sent:
 
 ```typescript
-// middleware.ts
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+async sendMagicLink(email: string) {
+  const domain = email.split('@')[1]
+  const allowed = this.config.get<string>('ALLOWED_EMAIL_DOMAINS').split(',')
+  if (!allowed.includes(domain)) {
+    throw new ForbiddenException('Email domain not allowed')
+  }
+  // ... generate token and send email
+}
+```
 
-const ALLOWED_DOMAINS = process.env.ALLOWED_EMAIL_DOMAINS!.split(',')
+A second check runs in `UsersService.create()` to prevent direct user creation via the API.
 
-export async function middleware(request: NextRequest) {
-  const response = NextResponse.next()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { /* cookie adapter */ } }
-  )
+---
 
-  const { data: { session } } = await supabase.auth.getSession()
-  const isProtected = !request.nextUrl.pathname.startsWith('/(auth)')
+## Magic Link Flow
 
-  if (!session && isProtected) {
+```
+POST /auth/magic-link   { email }
+  → validate domain
+  → generate 32-byte hex token, hash it (SHA-256), store in DB with 15-min TTL
+  → send email via Resend/Mailhog with link: /auth/verify?token=<raw>
+  → return { ok: true }
+
+GET /auth/verify?token=<raw>
+  → hash the raw token, look up MagicLinkToken row
+  → check not expired, not used
+  → mark token used
+  → upsert User(email)
+  → issue JWT, set cookie
+  → redirect to /onboarding (new user) or / (existing user)
+```
+
+The `MagicLinkToken` table (or equivalent field on User) stores:
+- `tokenHash` — SHA-256 of the raw token
+- `expiresAt` — 15 minutes from creation
+- `usedAt` — null until consumed
+
+---
+
+## Password Flow
+
+```
+POST /auth/check-email  { email }
+  → returns { exists: boolean, hasPassword: boolean }
+  → frontend uses this to decide: send magic link OR show password field
+
+POST /auth/login        { email, password }
+  → find user by email
+  → bcrypt.compare(password, user.passwordHash)
+  → if ok: issue JWT, set cookie
+  → return { ok: true }
+
+POST /auth/set-password  (JWT required)
+  → bcrypt.hash(password, 12)
+  → update user.passwordHash
+  → return { ok: true }
+```
+
+---
+
+## Frontend Auth Layer
+
+The frontend never reads the `access_token` cookie (httpOnly). Instead:
+
+**`proxy.ts`** (runs at Next.js middleware layer) — checks cookie presence and redirects unauthenticated requests to `/login`:
+
+```typescript
+// frontend/proxy.ts
+const PUBLIC_PREFIXES = ['/login', '/auth/', '/api/', '/onboarding']
+
+export function proxy(request: NextRequest) {
+  if (PUBLIC_PREFIXES.some(p => request.nextUrl.pathname.startsWith(p))) {
+    return NextResponse.next()
+  }
+  const token = request.cookies.get('access_token')?.value
+  if (!token) {
+    const isPrefetch = request.headers.get('next-router-prefetch') === '1'
+    if (isPrefetch) return NextResponse.next()
     return NextResponse.redirect(new URL('/login', request.url))
   }
-
-  if (session) {
-    const domain = session.user.email!.split('@')[1]
-    if (!ALLOWED_DOMAINS.includes(domain)) {
-      await supabase.auth.signOut()
-      return NextResponse.redirect(new URL('/login?error=domain', request.url))
-    }
-  }
-
-  return response
+  return NextResponse.next()
 }
 ```
 
----
+**Server components** call `GET /api/me` (via the NestJS backend) to get the current user. The cookie is forwarded automatically by the browser.
 
-## requireAuth Helper
+**Route handlers** in `frontend/app/api/auth/` proxy auth actions to the NestJS backend:
 
-Every API route calls this shared helper. It extracts the session, loads the user with their profiles, and returns the full user object. If the session is missing, it throws `'UNAUTHORIZED'` which the route handler catches and converts to a 401 response.
-
-```typescript
-// lib/utils/auth.ts
-import { createServerClient } from '@supabase/ssr'
-import { prisma } from '@/lib/prisma'
-import { cookies } from 'next/headers'
-
-export async function requireAuth() {
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { get: (name) => cookies().get(name)?.value } }
-  )
-
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) throw new Error('UNAUTHORIZED')
-
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { email: session.user.email! },
-    include: { buyerProfile: true, sellerProfile: true }
-  })
-  return user
-}
-```
-
-Usage in any API route:
-
-```typescript
-export async function POST(req: NextRequest) {
-  try {
-    const user = await requireAuth()
-    // user.buyerProfile and user.sellerProfile are available
-    // ...
-  } catch (err: any) {
-    if (err.message === 'UNAUTHORIZED') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    // ...
-  }
-}
-```
-
----
-
-## Supabase Client Variants
-
-Three client instances are used depending on context:
-
-| File | Client type | Used for |
-|------|------------|---------|
-| `lib/supabase/client.ts` | `createBrowserClient` | Client components, React hooks |
-| `lib/supabase/server.ts` | `createServerClient` | Server components, API routes |
-| `lib/supabase/admin.ts` | `createClient` with service role key | Admin operations that bypass Row Level Security |
-
-```typescript
-// lib/supabase/admin.ts
-import { createClient } from '@supabase/supabase-js'
-
-export function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
-```
-
-The admin client is only imported in server-side code (API routes, Edge Functions). It must never be used in client components.
+| Next.js route | Proxies to NestJS |
+|--------------|-------------------|
+| `POST /api/auth/magic-link` | `POST /auth/magic-link` |
+| `GET /auth/callback` | `GET /auth/verify?token=` |
+| `GET /auth/set-cookie` | sets `access_token` cookie from query param |
+| `POST /api/auth/set-password` | `POST /auth/set-password` (reads cookie server-side) |
+| `GET /auth/logout` | clears `access_token` cookie, redirects to `/login` |
 
 ---
 
 ## Admin Guard
 
-Admin-only routes (under `/admin`) check an `isAdmin` boolean on the `User` model. Add this field to the Prisma schema.
+Admin-only routes check `user.isAdmin` on the Prisma User model:
 
-In middleware: check `user.isAdmin` before allowing access to `/admin/**` paths.
+```typescript
+// backend/src/auth/guards/admin.guard.ts
+@Injectable()
+export class AdminGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest()
+    if (!req.user?.isAdmin) throw new ForbiddenException()
+    return true
+  }
+}
+```
 
-In API route handlers: call `requireAuth()` then assert `user.isAdmin === true`, returning 403 if not.
+Usage:
 
-Admin API operations that need to bypass Row Level Security (e.g., reading another user's private data for dispute resolution) use `createAdminClient()` instead of the regular server client.
+```typescript
+@UseGuards(JwtAuthGuard, AdminGuard)
+@Post('admin/disputes/:id/resolve')
+resolve(@Param('id') id: string, @Body() dto: ResolveDisputeDto) { ... }
+```
 
 ---
 
-## Row Level Security (Supabase RLS)
+## Authorization Rules Summary
 
-Enable RLS on all tables. Key policies:
-
-| Table | Read | Write |
-|-------|------|-------|
-| `users` | Own row only | Own row only |
-| `demand_requests` | Own rows + matched listings' sellers | Own rows |
-| `product_listings` | All authenticated users | Own rows |
-| `proof_assets` | All authenticated users | Own rows |
-| `conversations` | Participant only (buyer or seller) | Participant only |
-| `messages` | Conversation participant | Conversation participant |
-| `offers` | Conversation participant | Conversation participant |
-| `orders` | Buyer or seller of order | Buyer or seller of order |
-| `disputes` | Filed-by user or assigned admin | Filed-by user or admin |
-| `notifications` | Own rows | System only (service role) |
-
-Admin operations use the service-role client which bypasses all RLS policies.
+| Route | Guard | Who can access |
+|-------|-------|---------------|
+| `POST /auth/magic-link` | None | Anyone |
+| `GET /auth/verify` | None | Token holder |
+| `POST /auth/login` | None | Anyone |
+| `GET /auth/me` | JwtAuthGuard | Authenticated user |
+| `POST /auth/set-password` | JwtAuthGuard | Authenticated user (own) |
+| `GET /demands` | JwtAuthGuard | Any authenticated user |
+| `POST /demands` | JwtAuthGuard | Any authenticated user |
+| `PATCH /demands/:id` | JwtAuthGuard | Owner only (checked in service) |
+| `DELETE /demands/:id` | JwtAuthGuard | Owner only |
+| `POST /admin/**` | JwtAuthGuard + AdminGuard | isAdmin users only |

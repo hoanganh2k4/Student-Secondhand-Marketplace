@@ -14,13 +14,14 @@ Choose technologies that minimize operational complexity while supporting the fu
 
 | Layer | Technology | Reason |
 |-------|-----------|--------|
-| Frontend | Next.js 14 (App Router, TypeScript) | UI only; calls NestJS API; large ecosystem |
+| Frontend | Next.js 16 (App Router, TypeScript) | UI only; calls NestJS API; large ecosystem |
 | Backend API | NestJS 10 (TypeScript) | Standalone REST server; modular architecture; decorator-based |
 | Database | PostgreSQL (Docker) | Fully local; no cloud dependency during dev |
 | ORM | Prisma | Type-safe schema management; great migration tooling |
 | Auth | JWT — magic link + password | Self-hosted; magic link via email; no external auth service |
 | File Storage | MinIO (Docker, S3-compatible) | Fully local; same `@aws-sdk/client-s3` code works for R2/S3 in prod |
-| Email | Mailhog (Docker) → Resend (prod) | Local email trap for dev; swap to Resend for production |
+| Email (dev) | Mailhog (Docker, SMTP trap) | Catches all outgoing email locally; view at localhost:8025 |
+| Email (prod) | Resend | Transactional email via Resend SDK; same code, different config |
 | Real-time | To be decided (Phase 2) | Socket.io or Supabase Realtime when needed |
 | UI Components | shadcn/ui + Tailwind CSS | Unstyled primitives; fast to customize |
 | State (client) | Zustand + TanStack Query | Zustand for UI state; TanStack Query for server state/caching |

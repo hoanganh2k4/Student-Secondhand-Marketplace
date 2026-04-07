@@ -1,8 +1,8 @@
-# Web API — Next.js Routes
+# Web API — NestJS REST
 
-> Platform: Next.js 14 App Router (`app/api/`)
-> Auth: `requireAuth()` from `lib/utils/auth.ts` — all routes server-only
-> Validation: Zod
+> Platform: NestJS 10 — standalone server on port 4000, global prefix `/api`
+> Auth: `JwtAuthGuard` (Bearer token via `access_token` httpOnly cookie)
+> Validation: `class-validator` + `class-transformer` (DTOs with decorators)
 > See [ai-api.md](ai-api.md) for the Python AI matching service API.
 
 ---
@@ -12,21 +12,23 @@
 ### Route Structure
 
 ```typescript
-// app/api/demands/route.ts
-export async function POST(req: NextRequest) {
-  const user = await requireAuth()           // throws UNAUTHORIZED if not authed
-  const body = CreateDemandSchema.parse(await req.json())  // throws ZodError if invalid
-  // ... business logic
-  return NextResponse.json(result, { status: 201 })
+// backend/src/demands/demands.controller.ts
+@Controller('demands')
+@UseGuards(JwtAuthGuard)
+export class DemandsController {
+  @Post()
+  create(@Request() req: any, @Body() dto: CreateDemandDto) {
+    return this.demandsService.create(req.user.id, dto)
+  }
 }
 ```
 
 ### Error Response
 
 ```json
-{ "error": "Human readable message" }
-// or for Zod validation:
-{ "error": [{ "path": ["budgetMin"], "message": "Required" }] }
+{ "message": "Human readable message", "statusCode": 422 }
+// or for class-validator:
+{ "message": ["budgetMin must be a number"], "error": "Bad Request", "statusCode": 400 }
 ```
 
 | Code | When |
@@ -50,9 +52,9 @@ export async function POST(req: NextRequest) {
 |--------|------|-------------|------|
 | POST | `/api/demands` | Create DemandRequest; triggers AI + rule-based matching | Buyer |
 | GET | `/api/demands` | List my demand requests | Self |
-| GET | `/api/demands/[id]` | Get demand + its matches | Owner |
-| PATCH | `/api/demands/[id]` | Update demand (draft status only) | Owner |
-| DELETE | `/api/demands/[id]` | Cancel demand | Owner |
+| GET | `/api/demands/:id` | Get demand + its matches | Owner |
+| PATCH | `/api/demands/:id` | Update demand (draft status only) | Owner |
+| DELETE | `/api/demands/:id` | Cancel demand | Owner |
 
 **POST /api/demands body:**
 ```typescript
@@ -79,10 +81,10 @@ export async function POST(req: NextRequest) {
 |--------|------|-------------|------|
 | POST | `/api/listings` | Create ProductListing (draft) | Seller |
 | GET | `/api/listings` | List my listings | Self |
-| GET | `/api/listings/[id]` | Get listing + its matches | Any authenticated |
-| PATCH | `/api/listings/[id]` | Update listing (draft only) | Owner |
-| POST | `/api/listings/[id]/publish` | Draft → active; validates proof; triggers matching | Owner |
-| DELETE | `/api/listings/[id]` | Remove listing | Owner |
+| GET | `/api/listings/:id` | Get listing + its matches | Any authenticated |
+| PATCH | `/api/listings/:id` | Update listing (draft only) | Owner |
+| POST | `/api/listings/:id/publish` | Draft → active; validates proof; triggers matching | Owner |
+| DELETE | `/api/listings/:id` | Remove listing | Owner |
 
 ---
 
@@ -90,9 +92,9 @@ export async function POST(req: NextRequest) {
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| GET | `/api/matches/[id]` | Get match + score breakdown | Participant |
-| POST | `/api/matches/[id]/acknowledge` | Buyer or seller acknowledges match | Participant |
-| POST | `/api/matches/[id]/decline` | Buyer or seller declines match | Participant |
+| GET | `/api/matches/:id` | Get match + score breakdown | Participant |
+| POST | `/api/matches/:id/acknowledge` | Buyer or seller acknowledges match | Participant |
+| POST | `/api/matches/:id/decline` | Buyer or seller declines match | Participant |
 
 ---
 
@@ -101,26 +103,26 @@ export async function POST(req: NextRequest) {
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | GET | `/api/conversations` | List user's conversations (inbox) | Self |
-| GET | `/api/conversations/[id]` | Get conversation + messages + evidence requests | Participant |
-| POST | `/api/conversations/[id]/messages` | Send a message (stage-gated) | Participant |
-| POST | `/api/conversations/[id]/advance-stage` | Advance verification → clarification | Buyer only |
-| POST | `/api/conversations/[id]/evidence-requests` | Create EvidenceRequest (max 5) | Buyer only |
-| PATCH | `/api/conversations/[id]/evidence-requests/[erId]` | Fulfill or reject EvidenceRequest | Seller only |
-| POST | `/api/conversations/[id]/offers` | Create Offer (negotiation stage only) | Participant |
+| GET | `/api/conversations/:id` | Get conversation + messages + evidence requests | Participant |
+| POST | `/api/conversations/:id/messages` | Send a message (stage-gated) | Participant |
+| POST | `/api/conversations/:id/advance-stage` | Advance verification → clarification | Buyer only |
+| POST | `/api/conversations/:id/evidence-requests` | Create EvidenceRequest (max 5) | Buyer only |
+| PATCH | `/api/conversations/:id/evidence-requests/:erId` | Fulfill or reject EvidenceRequest | Seller only |
+| POST | `/api/conversations/:id/offers` | Create Offer (negotiation stage only) | Participant |
 
 **Stage-gating — text messages blocked in verification:**
 ```typescript
-if (conversation.stage === 'verification' && messageType === 'text') {
-  return NextResponse.json({ error: 'Text messages not available in verification stage.' }, { status: 422 })
+if (conversation.stage === 'verification' && dto.messageType === 'text') {
+  throw new UnprocessableEntityException('Text messages not available in verification stage.')
 }
 ```
 
 **Rate limiting — 10 messages/hour (DB counter, no Redis):**
 ```typescript
-const recentCount = await prisma.message.count({
-  where: { conversationId, senderUserId: user.id, createdAt: { gte: oneHourAgo } }
+const recentCount = await this.prisma.message.count({
+  where: { conversationId, senderUserId: userId, createdAt: { gte: oneHourAgo } }
 })
-if (recentCount >= 10) return NextResponse.json({ error: 'Rate limit reached' }, { status: 429 })
+if (recentCount >= 10) throw new HttpException('Rate limit reached', 429)
 ```
 
 ---
@@ -129,11 +131,11 @@ if (recentCount >= 10) return NextResponse.json({ error: 'Rate limit reached' },
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| GET | `/api/offers/[id]` | Get offer detail | Participant |
-| POST | `/api/offers/[id]/accept` | Accept offer; creates Order atomically | Recipient |
-| POST | `/api/offers/[id]/reject` | Reject offer | Recipient |
-| POST | `/api/offers/[id]/counter` | Create counter-offer | Recipient |
-| DELETE | `/api/offers/[id]` | Cancel offer (creator only, before response) | Creator |
+| GET | `/api/offers/:id` | Get offer detail | Participant |
+| POST | `/api/offers/:id/accept` | Accept offer; creates Order atomically | Recipient |
+| POST | `/api/offers/:id/reject` | Reject offer | Recipient |
+| POST | `/api/offers/:id/counter` | Create counter-offer | Recipient |
+| DELETE | `/api/offers/:id` | Cancel offer (creator only, before response) | Creator |
 
 ---
 
@@ -142,11 +144,11 @@ if (recentCount >= 10) return NextResponse.json({ error: 'Rate limit reached' },
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | GET | `/api/orders` | List user's orders | Self |
-| GET | `/api/orders/[id]` | Get order detail + proof snapshot | Participant |
-| POST | `/api/orders/[id]/confirm` | Mark completion (both sides needed) | Participant |
-| POST | `/api/orders/[id]/cancel` | Cancel order (reason required) | Participant |
-| POST | `/api/orders/[id]/dispute` | File a Dispute (within 48h of completion) | Participant |
-| POST | `/api/orders/[id]/review` | Submit RatingReview (after completion, 7-day window) | Participant |
+| GET | `/api/orders/:id` | Get order detail + proof snapshot | Participant |
+| POST | `/api/orders/:id/confirm` | Mark completion (both sides needed) | Participant |
+| POST | `/api/orders/:id/cancel` | Cancel order (reason required) | Participant |
+| POST | `/api/orders/:id/dispute` | File a Dispute (within 48h of completion) | Participant |
+| POST | `/api/orders/:id/review` | Submit RatingReview (after completion, 7-day window) | Participant |
 
 ---
 
@@ -154,7 +156,7 @@ if (recentCount >= 10) return NextResponse.json({ error: 'Rate limit reached' },
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| POST | `/api/upload` | Upload ProofAsset to Supabase Storage | Any authenticated |
+| POST | `/api/upload` | Upload ProofAsset to MinIO; creates ProofAsset record | Any authenticated |
 
 ---
 
@@ -163,10 +165,10 @@ if (recentCount >= 10) return NextResponse.json({ error: 'Rate limit reached' },
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | GET | `/api/admin/disputes` | List all disputes | Admin |
-| PATCH | `/api/admin/disputes/[id]/resolve` | Set dispute resolution | Admin |
-| PATCH | `/api/admin/users/[id]/suspend` | Suspend a user | Admin |
-| PATCH | `/api/admin/users/[id]/ban` | Ban a user | Admin |
-| PATCH | `/api/admin/listings/[id]/remove` | Force-remove a listing | Admin |
+| PATCH | `/api/admin/disputes/:id/resolve` | Set dispute resolution | Admin |
+| PATCH | `/api/admin/users/:id/suspend` | Suspend a user | Admin |
+| PATCH | `/api/admin/users/:id/ban` | Ban a user | Admin |
+| PATCH | `/api/admin/listings/:id/remove` | Force-remove a listing | Admin |
 
 ---
 

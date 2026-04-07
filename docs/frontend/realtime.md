@@ -1,199 +1,153 @@
 # Real-time Updates (Frontend)
 
-> Provider: Supabase Realtime (Postgres change-data-capture)
-> No separate WebSocket server needed in MVP.
-> Location: `hooks/`
+> Implemented via Socket.IO with JWT auth.
+> Two namespaces: `/chat` (conversations) and `/orders` (order status).
 
 ---
 
-## How It Works
+## Architecture
 
-Supabase Realtime listens to Postgres WAL (Write-Ahead Log) changes and pushes them to subscribed clients via WebSocket. The client subscribes to a channel filtered by a specific `conversation_id` or `user_id`, so each client only receives events relevant to them.
+The frontend cannot read httpOnly cookies from JavaScript, so WebSocket auth uses a token exchange pattern:
+
+1. Client calls `GET /api/auth/ws-token` (Next.js server route)
+2. Server route reads the `access_token` httpOnly cookie and returns `{ token }` as JSON
+3. Client passes the token as `socket.auth.token` when connecting
+4. Socket.IO gateway on the backend verifies the token with `JwtService.verify()`
 
 ---
 
-## useConversationMessages
+## useConversationSocket
 
-Subscribes to new messages in a specific conversation. Used in `ConversationThread.tsx`.
+> File: `frontend/hooks/useConversationSocket.ts`
+> Namespace: `/chat`
 
 ```typescript
-// hooks/useConversationMessages.ts
-import { useEffect, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+export function useConversationSocket(
+  conversationId: string | null,
+  handlers: {
+    new_message?:            (msg: any)    => void
+    stage_changed?:          (data: any)   => void
+    order_request_updated?:  (req: any)    => void
+    order_created?:          (data: any)   => void
+  }
+)
+```
 
-export function useConversationMessages(conversationId: string) {
-  const [messages, setMessages] = useState<any[]>([])
+**Events subscribed:**
+- `new_message` — new chat message (with sender object embedded)
+- `stage_changed` — conversation stage advanced
+- `order_request_updated` — OrderRequest status/info updated
+- `order_created` — OrderRequest finalized, `{ orderId }` → redirect to `/orders/:id`
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+**Usage in conversation page:**
+```typescript
+useConversationSocket(conv?.id ?? null, {
+  new_message:           (msg) => setMessages(prev => [...prev, msg]),
+  order_request_updated: (req) => setConv(prev => updateOrderRequest(prev, req)),
+  order_created:         ({ orderId }) => router.push(`/orders/${orderId}`),
+})
+```
 
-  useEffect(() => {
-    // Initial fetch
-    supabase
-      .from('messages')
-      .select('*, sender:users(id, name)')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
-      .then(({ data }) => setMessages(data ?? []))
+---
 
-    // Real-time subscription for new messages
-    const channel = supabase
-      .channel(`messages:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event:  'INSERT',
-          schema: 'public',
-          table:  'messages',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        payload => setMessages(prev => [...prev, payload.new])
-      )
-      .subscribe()
+## useOrderSocket
 
-    return () => { supabase.removeChannel(channel) }
-  }, [conversationId])
+> File: `frontend/hooks/useOrderSocket.ts`
+> Namespace: `/orders`
 
-  return messages
+```typescript
+export function useOrderSocket(
+  orderId: string | null,
+  onUpdate: (order: Partial<Order>) => void,
+)
+```
+
+**Events subscribed:**
+- `order_updated` — partial order object (status, confirmation booleans, etc.)
+
+**Usage in order detail page:**
+```typescript
+useOrderSocket(id ?? null, (updated) => {
+  setOrder(prev => prev ? { ...prev, ...updated } : prev)
+})
+```
+
+---
+
+## React StrictMode Safety
+
+Both hooks use the **local variable + cancelled flag** pattern to avoid double-connection in React 18 StrictMode (which runs `useEffect` twice in development):
+
+```typescript
+useEffect(() => {
+  if (!id) return
+  let socket: Socket | null = null
+  let cancelled = false
+
+  async function connect() {
+    const res = await fetch('/api/auth/ws-token')
+    if (!res.ok || cancelled) return
+    const { token } = await res.json()
+    if (cancelled) return
+
+    socket = io(`${WS_URL}/namespace`, { auth: { token }, transports: ['websocket'] })
+    socket.on('connect', () => socket?.emit('join_room', id))
+    socket.on('event', handler)
+  }
+
+  connect()
+  return () => {
+    cancelled = true
+    socket?.disconnect()
+    socket = null
+  }
+}, [id])
+```
+
+The `cancelled` flag ensures the async `fetch` result is discarded if the effect was torn down before the fetch resolved.
+
+---
+
+## Backend Gateways
+
+| File | Namespace | Auth | Rooms |
+|------|-----------|------|-------|
+| `backend/src/conversations/conversations.gateway.ts` | `/chat` | JWT on connect | `conv:<conversationId>` |
+| `backend/src/orders/orders.gateway.ts` | `/orders` | JWT on connect | `order:<orderId>` |
+
+Both gateways:
+- Verify JWT in `handleConnection`, disconnect client if invalid
+- Verify user is a participant before joining a room
+- Expose `emit(id, event, data)` helper called by the corresponding service
+
+---
+
+## WS Token Route
+
+> File: `frontend/app/api/auth/ws-token/route.ts`
+
+```typescript
+// GET /api/auth/ws-token
+export async function GET(req: NextRequest) {
+  const token = req.cookies.get('access_token')?.value
+  if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  return NextResponse.json({ token })
 }
 ```
 
+This route is only accessible from the same Next.js app (not proxied to the backend).
+
 ---
 
-## useEvidenceRequests
+## Environment Variables
 
-Subscribes to EvidenceRequest changes (INSERT and UPDATE) for a conversation. Used to show real-time status changes when seller fulfills or rejects a request.
+| Variable | Description |
+|----------|-------------|
+| `NEXT_PUBLIC_API_URL` | Backend base URL, e.g. `http://localhost:4000/api` |
 
+WS URL is derived by stripping `/api` suffix:
 ```typescript
-// hooks/useEvidenceRequests.ts
-import { useEffect, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
-
-export function useEvidenceRequests(conversationId: string) {
-  const [requests, setRequests] = useState<any[]>([])
-
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
-  useEffect(() => {
-    supabase
-      .from('evidence_requests')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at')
-      .then(({ data }) => setRequests(data ?? []))
-
-    const channel = supabase
-      .channel(`evidence_requests:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event:  '*',   // INSERT and UPDATE
-          schema: 'public',
-          table:  'evidence_requests',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        payload => {
-          setRequests(prev => {
-            const existing = prev.findIndex(r => r.id === payload.new.id)
-            if (existing >= 0) {
-              const updated = [...prev]
-              updated[existing] = payload.new
-              return updated
-            }
-            return [...prev, payload.new]
-          })
-        }
-      )
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [conversationId])
-
-  return requests
-}
+const WS_URL = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api')
+  .replace(/\/api$/, '')
+// → 'http://localhost:4000'
 ```
-
----
-
-## useNotifications
-
-Subscribes to new notifications for the current user. Drives the notification bell badge count.
-
-```typescript
-// hooks/useNotifications.ts
-import { useEffect, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
-
-export function useNotifications(userId: string) {
-  const [unreadCount, setUnreadCount] = useState(0)
-
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
-  useEffect(() => {
-    // Initial unread count
-    supabase
-      .from('notifications')
-      .select('id', { count: 'exact' })
-      .eq('user_id', userId)
-      .eq('read', false)
-      .then(({ count }) => setUnreadCount(count ?? 0))
-
-    // Subscribe to new notifications
-    const channel = supabase
-      .channel(`notifications:${userId}`)
-      .on(
-        'postgres_changes',
-        {
-          event:  'INSERT',
-          schema: 'public',
-          table:  'notifications',
-          filter: `user_id=eq.${userId}`,
-        },
-        () => setUnreadCount(prev => prev + 1)
-      )
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [userId])
-
-  return unreadCount
-}
-```
-
----
-
-## Supabase Realtime Setup Requirements
-
-For Postgres changes to be broadcast, the table must have replication enabled. Run this once per table that needs real-time:
-
-```sql
--- Enable replication for messages
-ALTER TABLE messages REPLICA IDENTITY FULL;
-ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-
--- Enable replication for evidence_requests
-ALTER TABLE evidence_requests REPLICA IDENTITY FULL;
-ALTER PUBLICATION supabase_realtime ADD TABLE evidence_requests;
-
--- Enable replication for notifications
-ALTER TABLE notifications REPLICA IDENTITY FULL;
-ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
-```
-
-Run these in the Supabase SQL Editor or as part of a Prisma migration (as raw SQL via `prisma.$executeRaw`).
-
----
-
-## Concurrent Connections Limit
-
-Supabase free tier: 200 concurrent Realtime connections. Pro tier: 500.
-
-For MVP with < 200 concurrent users this is not a concern. Each active conversation page opens 2 channels (messages + evidence_requests). Monitor connection count in Supabase Dashboard > Realtime > Inspector as user count grows.

@@ -8,17 +8,23 @@
 ## Architecture
 
 ```
-Browser (Next.js 14 App Router)
+Browser (Next.js 16 App Router)
     │
     ▼
-Vercel  ─── Next.js API Routes + SSR
+Next.js Dev Server (port 3000)
+    │  proxy.ts — auth guard (access_token cookie)
     │
-    ├── Supabase
-    │     ├── PostgreSQL (Prisma ORM)
-    │     ├── Auth (magic link, .edu domain)
-    │     ├── Storage (proof assets)
-    │     ├── Realtime (conversations, notifications)
-    │     └── Edge Functions (cron jobs)
+    ▼
+NestJS REST API (port 4000, prefix /api)
+    │
+    ├── PostgreSQL (Docker)
+    │     └── Prisma ORM (backend/prisma/schema.prisma)
+    │
+    ├── MinIO (Docker, S3-compatible)
+    │     └── bucket: proof-assets
+    │
+    ├── Resend (email — magic links, notifications)
+    │     └── Dev: Mailhog SMTP trap (localhost:8025)
     │
     └── AI Matching Microservice  (multimodal-matching/)
           ├── Stage 0: QueryParser       — intent + category routing
@@ -34,7 +40,7 @@ Vercel  ─── Next.js API Routes + SSR
 ### "I'm setting up the project for the first time"
 → [infra/dev-workflow.md](infra/dev-workflow.md) — local setup, Prisma workflow, sprint order  
 → [infra/env.md](infra/env.md) — all environment variables  
-→ [infra/deployment.md](infra/deployment.md) — Vercel + Supabase + AI service deploy
+→ [infra/deployment.md](infra/deployment.md) — VPS Docker Compose deployment
 
 ### "I need to understand the data model"
 → [backend/schema.prisma.md](backend/schema.prisma.md) — full Prisma schema (source of truth)  
@@ -57,24 +63,24 @@ Vercel  ─── Next.js API Routes + SSR
 | Notification | [objects/notification.md](backend/objects/notification.md) |
 
 ### "I need to add or change an API endpoint"
-→ [backend/api/web-api.md](backend/api/web-api.md) — all Next.js routes (demands, listings, matches, conversations, orders, admin)  
+→ [backend/api/web-api.md](backend/api/web-api.md) — all NestJS REST endpoints (demands, listings, matches, conversations, orders, admin)  
 → [backend/api/ai-api.md](backend/api/ai-api.md) — FastAPI AI service endpoints
 
 ### "I need to understand how a feature works"
 
 | Feature | File |
 |---------|------|
-| Authentication + RLS | [services/auth.md](backend/services/auth.md) |
+| Authentication (JWT, magic link, password) | [services/auth.md](backend/services/auth.md) |
 | Rule-based matching engine | [services/matching-engine.md](backend/services/matching-engine.md) |
 | AI matching pipeline (BiEncoder, FAISS, BM25) | [services/matching-ai.md](backend/services/matching-ai.md) |
-| Proof asset upload + storage policy | [services/file-upload.md](backend/services/file-upload.md) |
-| Email notifications (Resend templates) | [services/notifications.md](backend/services/notifications.md) |
+| Proof asset upload + MinIO storage | [services/file-upload.md](backend/services/file-upload.md) |
+| Email + in-app notifications | [services/notifications.md](backend/services/notifications.md) |
 | Background cron jobs (expiry, auto-close) | [services/background-jobs.md](backend/services/background-jobs.md) |
 
 ### "I need to build or change a frontend screen"
 → [frontend/repo-structure.md](frontend/repo-structure.md) — full directory tree, route map, EC → Next.js screen mapping  
 → [frontend/components.md](frontend/components.md) — design tokens, shared components, all screen layouts  
-→ [frontend/realtime.md](frontend/realtime.md) — Supabase Realtime hooks
+→ [frontend/realtime.md](frontend/realtime.md) — real-time updates (Phase 2 — deferred)
 
 ### "I need to understand the business rules"
 → [`rules.md`](../rules.md) — all domain rules (access, listing, matching, conversation, offer, trust)
@@ -96,7 +102,7 @@ docs/
 │   ├── state-machines.md           ← state transition code for all objects
 │   │
 │   ├── api/
-│   │   ├── web-api.md              ← Next.js API routes
+│   │   ├── web-api.md              ← NestJS REST API routes
 │   │   └── ai-api.md               ← FastAPI AI service endpoints
 │   │
 │   ├── objects/                    ← one file per domain object
@@ -123,12 +129,12 @@ docs/
 ├── frontend/
 │   ├── repo-structure.md           ← full directory tree + EC → Next.js screen map
 │   ├── components.md               ← design tokens + shared components + screen layouts
-│   └── realtime.md                 ← Supabase Realtime hooks
+│   └── realtime.md                 ← real-time (Phase 2 — deferred)
 │
 └── infra/
     ├── env.md                      ← all environment variables
     ├── dev-workflow.md             ← local setup + sprint order
-    ├── deployment.md               ← Vercel + Supabase + AI service
+    ├── deployment.md               ← VPS Docker Compose deployment
     └── roadmap.md                  ← Phase 2 upgrade paths
 ```
 
@@ -138,9 +144,9 @@ docs/
 
 | Layer | Convention | Example |
 |-------|-----------|---------|
-| TypeScript / Next.js | camelCase fields, PascalCase types | `buyerProfileId`, `DemandRequest` |
+| TypeScript / NestJS | camelCase fields, PascalCase types | `buyerProfileId`, `DemandRequest` |
 | Prisma schema | camelCase (auto-maps to snake_case) | `proofCompletenessScore` |
-| PostgreSQL / Supabase | snake_case | `proof_completeness_score` |
+| PostgreSQL | snake_case | `proof_completeness_score` |
 | Python (AI service) | snake_case | `rerank_score`, `category_id` |
 | API JSON bodies | camelCase | `{ "budgetMin": 100 }` |
 | React components | PascalCase files | `MatchScore.tsx`, `StatusBadge.tsx` |
@@ -152,17 +158,19 @@ docs/
 
 | Layer | Technology |
 |-------|-----------|
-| Full-stack framework | Next.js 14 (App Router, TypeScript) |
-| Database | PostgreSQL via Supabase |
-| ORM | Prisma |
-| Auth | Supabase Auth (magic link, .edu restriction) |
-| File storage | Supabase Storage |
-| Real-time | Supabase Realtime |
-| Email | Resend + React Email |
+| Frontend framework | Next.js 16 (App Router, TypeScript) |
+| Backend API | NestJS 10 (TypeScript, port 4000) |
+| Database | PostgreSQL (Docker) |
+| ORM | Prisma 6 |
+| Auth | JWT — magic link (Resend) + password |
+| File storage | MinIO (Docker, S3-compatible) |
+| Email (dev) | Mailhog SMTP trap |
+| Email (prod) | Resend |
+| Real-time | Phase 2 (Socket.io or SSE) |
 | UI | shadcn/ui + Tailwind CSS |
 | Client state | Zustand + TanStack Query |
-| Background jobs | Supabase Edge Functions (Deno cron) |
+| Background jobs | NestJS `@nestjs/schedule` |
 | AI matching | Python · FastAPI · PyTorch · FAISS · BM25 |
-| Deployment | Vercel (app) + Supabase (backend) + Docker/VPS (AI) |
+| Deployment | VPS / Docker Compose (all services) |
 
 Full rationale → [stack.md](stack.md)
