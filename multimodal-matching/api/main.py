@@ -354,5 +354,164 @@ def rebuild_index(req: IndexRebuildRequest):
         raise HTTPException(500, str(e))
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# VISION — CLIP ViT-L/14  +  Florence-2-base
+# Loaded lazily on first request to keep startup fast when vision is not needed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+from src.vision import CLIPImageFilter, FlorenceAttributeExtractor
+
+_clip_filter:    CLIPImageFilter | None            = None
+_florence:       FlorenceAttributeExtractor | None  = None
+_VISION_ENABLED = os.getenv("VISION_ENABLED", "true").lower() == "true"
+
+
+def _get_clip() -> CLIPImageFilter:
+    global _clip_filter
+    if _clip_filter is None:
+        if not _VISION_ENABLED:
+            raise HTTPException(503, "Vision features disabled (VISION_ENABLED=false)")
+        _clip_filter = CLIPImageFilter(cache_dir=os.getenv("MODEL_CACHE_DIR"))
+    return _clip_filter
+
+
+def _get_florence() -> FlorenceAttributeExtractor:
+    global _florence
+    if _florence is None:
+        if not _VISION_ENABLED:
+            raise HTTPException(503, "Vision features disabled (VISION_ENABLED=false)")
+        _florence = FlorenceAttributeExtractor(cache_dir=os.getenv("MODEL_CACHE_DIR"))
+    return _florence
+
+
+# ── Request / response schemas ────────────────────────────────────────────────
+
+class ImageFilterRequest(BaseModel):
+    image_urls: list[str] = Field(..., min_length=1, max_length=20, description="HTTP(S) URLs of product images")
+    query:      str        = Field(..., min_length=1, max_length=256, description="Text query to compare against")
+    threshold:  float      = Field(default=0.20, ge=0.0, le=1.0,   description="Minimum cosine similarity to include in filtered results")
+
+
+class AttributeExtractRequest(BaseModel):
+    image_url: str         = Field(..., description="URL of the product image")
+    tasks:     list[str]   = Field(
+        default=["caption", "ocr"],
+        description="Florence-2 tasks: caption, detailed_caption, ocr, object_detection, dense_caption",
+    )
+
+
+class ListingContextRequest(BaseModel):
+    image_urls: list[str]  = Field(..., min_length=1, max_length=10)
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.post(
+    "/vision/filter",
+    tags=["Vision — CLIP ViT-L/14"],
+    summary="Score and filter product images against a text query",
+)
+def vision_filter(req: ImageFilterRequest):
+    """
+    Uses **CLIP ViT-L/14** (768-dim) to compute cosine similarity between
+    each image and the text query, then returns images above `threshold`.
+
+    Useful for:
+    - Filtering proof-asset photos that don't match the listed item description
+    - Ranking images for search result thumbnails
+    - Detecting mismatched images (spam / wrong item)
+
+    Returns list of {url, score} objects, sorted by score descending.
+    """
+    clip   = _get_clip()
+    t0     = time.perf_counter()
+    hits   = clip.filter_by_threshold(req.image_urls, req.query, req.threshold)
+    hits.sort(key=lambda x: x[1], reverse=True)
+    return {
+        "query":      req.query,
+        "threshold":  req.threshold,
+        "results":    [{"url": url, "score": round(score, 4)} for url, score in hits],
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+    }
+
+
+@app.post(
+    "/vision/score",
+    tags=["Vision — CLIP ViT-L/14"],
+    summary="Return raw CLIP similarity scores for all images (no threshold filter)",
+)
+def vision_score(req: ImageFilterRequest):
+    """
+    Returns a score for every image, including those below threshold.
+    Useful for debugging or building a UI that shows confidence bars.
+    """
+    clip   = _get_clip()
+    t0     = time.perf_counter()
+    scores = clip.score_images(req.image_urls, req.query)
+    return {
+        "query":   req.query,
+        "results": [
+            {"url": url, "score": round(score, 4)}
+            for url, score in zip(req.image_urls, scores)
+        ],
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+    }
+
+
+@app.post(
+    "/vision/extract",
+    tags=["Vision — Florence-2-base"],
+    summary="Extract structured attributes from a product image",
+)
+def vision_extract(req: AttributeExtractRequest):
+    """
+    Uses **Florence-2-base** (232M params, CPU-friendly) to extract:
+
+    | Task | Output |
+    |------|--------|
+    | `caption` | Short product description |
+    | `detailed_caption` | Long description with attributes |
+    | `ocr` | Text visible in the image (brand, model, label) |
+    | `object_detection` | Object labels (comma-separated) |
+    | `dense_caption` | Region-level descriptions |
+
+    The `ocr` + `detailed_caption` combo is particularly useful for indexing
+    product images into the FAISS text retrieval index.
+    """
+    florence = _get_florence()
+    t0       = time.perf_counter()
+    attrs    = florence.extract(req.image_url, tasks=req.tasks)
+    return {
+        "image_url":  req.image_url,
+        "attributes": attrs,
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+    }
+
+
+@app.post(
+    "/vision/listing-context",
+    tags=["Vision — Florence-2-base"],
+    summary="Generate text context for FAISS indexing from listing images",
+)
+def vision_listing_context(req: ListingContextRequest):
+    """
+    Extracts `detailed_caption + OCR` for each image and concatenates them
+    into a single string per image — ready to be appended to the listing's
+    text corpus before FAISS re-indexing.
+
+    Call this after a seller uploads proof assets, then pass the returned
+    `contexts` to `/index/rebuild` as additional text fields.
+    """
+    florence = _get_florence()
+    t0       = time.perf_counter()
+    contexts = [florence.build_listing_context(url) for url in req.image_urls]
+    return {
+        "image_urls": req.image_urls,
+        "contexts":   contexts,
+        "combined":   " | ".join(c for c in contexts if c.strip()),
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+    }
+
+
 if __name__ == "__main__":
     uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=False)
