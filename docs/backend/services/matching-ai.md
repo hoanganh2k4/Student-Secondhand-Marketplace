@@ -2,279 +2,180 @@
 
 > Location: `multimodal-matching/`
 > Language: Python 3.10 · PyTorch · FastAPI
-> Serves: `POST /search` — semantic product search for the marketplace
-> Companion doc: [matching-engine.md](matching-engine.md) — rule-based scoring layer
+> Port: 8000
+> NestJS integration: `backend/src/ai/` (AiService + AiController)
 
 ---
 
-## Why a Separate Microservice
-
-The Next.js app handles structured rule-based scoring (price, condition, location, quantity).
-The AI service handles *unstructured, language-level* matching: a buyer writes "laptop sinh viên giá rẻ" and the system must return actual laptops — not backpacks labelled "Ba lô đựng laptop".
-
-Key problems the AI layer solves:
-- **Context-word confusion** — "ba lô đựng laptop" ≠ "laptop"
-- **Vietnamese natural language** — multilingual encoder (`paraphrase-multilingual-MiniLM-L12-v2`)
-- **Attribute-aware ranking** — query "áo đen size L" should rank black-L items above black-XL
-- **Category routing** — "laptop" → search electronics sub-index only (1,999 products, not 6,900)
-
----
-
-## Pipeline Overview
+## Architecture
 
 ```
-Query (Vietnamese free text)
+NestJS Backend (port 4000)
         │
+        │  POST /score-pairs   ← pairwise semantic scoring for matching
+        │  POST /vision/extract ← Florence-2 caption/OCR for listing images
+        │  POST /vision/filter  ← CLIP image-text similarity filter
+        │  GET  /health
+        │  GET  /stats
         ▼
-┌───────────────────────────────────────┐
-│  Stage 0 — QueryParser                │
-│  • extract color / size / gender /    │
-│    brand / condition / product_type   │
-│  • build enriched_query string        │
-│  • CategoryClassifier (MLP) routes    │
-│    to sub-index (val_acc = 0.947)     │
-└────────────────┬──────────────────────┘
-                 │
-                 ▼
-┌───────────────────────────────────────┐
-│  Stage 1 — CategoryRouter             │
-│  • selects FAISS sub-index per cat    │
-│    (electronics 1999, fashion 2096…)  │
-│  • pre-filters price > 2× budget      │
-└────────────────┬──────────────────────┘
-                 │
-                 ▼
-┌───────────────────────────────────────────────────┐
-│  Stage 2 — Hybrid Retrieval (RRF fusion)          │
-│                                                   │
-│  Dense: BiEncoder (text+image) → FAISS top-K      │
-│    text: paraphrase-multilingual-MiniLM-L12-v2    │
-│    image: CLIP ViT-B/32 (zero-tensor if no image) │
-│    fusion: projection head → 256-dim L2-normed    │
-│                                                   │
-│  Lexical: BM25 (rank-bm25)                        │
-│    doc text: subcategory×4 + category + title +   │
-│    description  (sub×4 gives TF dominance)        │
-│                                                   │
-│  Merge: RRF  score = Σ 1/(60+rank)                │
-└────────────────────────┬──────────────────────────┘
-                         │
-                         ▼
-┌───────────────────────────────────────────────────┐
-│  Stage 3 — IntentAwareReranker                    │
-│  • graded attribute scoring:                      │
-│    color: exact=1.0 / same-family=0.5 / diff=0.0 │
-│    size:  exact=1.0 / adjacent=0.7 / miss=0.0    │
-│    gender: exact=1.0 / unisex=0.7 / miss=0.0     │
-│  • price hard cap (> 2× budget → dropped)         │
-│  • condition boost/penalty                        │
-│  • diversity penalty (same seller / same item)    │
-│  • why_this_result explanation list               │
-└────────────────────────┬──────────────────────────┘
-                         │
-                         ▼
-               Ranked results + why_this_result
+FastAPI AI Service (port 8000)
 ```
 
----
-
-## Directory Structure
-
-```
-multimodal-matching/
-├── configs/
-│   ├── config.yaml               — main config (batch_size=16, epochs=5)
-│   └── config_adversarial.yaml   — fine-tune config (frozen encoders, lr=5e-6)
-├── data/
-│   └── processed/
-│       ├── catalog.jsonl         — 6,900 products
-│       ├── train.jsonl           — 40,287 triplets (incl. 2,112 adversarial)
-│       ├── val.jsonl             — 5,613 triplets
-│       ├── parser_train.jsonl    — 22,950 category classifier queries
-│       ├── adv_train.jsonl       — 3,812 adversarial triplets only
-│       └── adv_val.jsonl         — 588 adversarial triplets only
-├── models/
-│   └── faiss_index/
-│       ├── index.faiss           — FAISS flat index (6,900 × 256-dim)
-│       ├── metadata.pkl          — product IDs + metadata
-│       └── bm25.pkl              — BM25 index (6,900 documents)
-├── checkpoints/
-│   ├── stage0/
-│   │   └── category_clf.pt       — CategoryClassifier (val_acc=0.947)
-│   └── biencoder/
-│       └── checkpoint_best.pt    — BiEncoder (adversarially fine-tuned)
-├── src/
-│   ├── catalog/
-│   │   └── canonicalizer.py      — extract color/size/brand/type from seller text
-│   ├── data/__init__.py          — TripletDataset, CatalogDataset, DataLoader factory
-│   ├── embedding/__init__.py     — BiEncoder: TextEncoder + ImageEncoder + ProjectionFusion
-│   ├── pipeline/
-│   │   ├── __init__.py           — MultiStagePipeline.from_config() + .search()
-│   │   ├── stage0/__init__.py    — QueryParser, CategoryClassifier, extract_* functions
-│   │   ├── stage1/__init__.py    — CategoryRouter, ProductIndex, sub-index building
-│   │   └── stage3/__init__.py    — IntentAwareReranker, graded scoring, why_this_result
-│   ├── retrieval/
-│   │   ├── __init__.py           — ProductIndex (FAISS wrapper)
-│   │   ├── bm25.py               — BM25Retriever (rank-bm25)
-│   │   └── merger.py             — reciprocal_rank_fusion()
-│   ├── reranking/__init__.py     — MultimodalReranker, RerankerInference
-│   ├── training/__init__.py      — BiEncoderTrainer (frozen encoders for 4GB GPU)
-│   └── utils/__init__.py         — load_config, get_logger, get_device
-├── scripts/
-│   ├── generate_large_dataset.py — generate catalog + triplets + adversarial data
-│   ├── build_index.py            — build FAISS + BM25 index
-│   ├── train_pipeline.py         — train Stage 0 (+ calls BiEncoder train)
-│   └── train.py                  — train BiEncoder / Reranker
-└── requirements.txt
-```
+All calls go through `AiService.call()` which logs every request to `AiCallLog` (endpoint, input, output, latency, error).
 
 ---
 
 ## Models
 
-| Component | Model | Params | Notes |
-|-----------|-------|--------|-------|
-| Text encoder | `paraphrase-multilingual-MiniLM-L12-v2` | 118M | frozen during fine-tune |
-| Image encoder | CLIP `ViT-B/32` | 151M | frozen during fine-tune |
-| Fusion head | `ProjectionFusion` (Linear→ReLU→Linear) | ~400K | only trained component |
-| Category classifier | `CategoryClassifier` (MLP 384→128→6) | ~50K | val_acc=0.947 |
+| Model | Task | Notes |
+|-------|------|-------|
+| `paraphrase-multilingual-MiniLM-L12-v2` | Semantic text similarity | Used in `/score-pairs` |
+| `Florence-2-base` (232M params) | Image captioning, OCR, object detection | Used in `/vision/extract` |
+| `CLIP ViT-L/14` | Image-text similarity | Used in `/vision/filter`, `/vision/score` |
 
 ---
 
-## Training
+## `/score-pairs` — Pairwise Semantic Scoring
 
-### Data
+The core endpoint used by the matching engine.
 
-| File | Count | Description |
-|------|-------|-------------|
-| `catalog.jsonl` | 6,900 | Products (electronics 29%, fashion 30%, sports 16%, books 10%, vehicles 8%, furniture 7%) |
-| `train.jsonl` | 40,287 | Triplets (query, positive, negative) — 4 hardness levels + adversarial |
-| `adv_train.jsonl` | 3,812 | Adversarial: query="laptop" / pos=laptop / neg="Ba lô đựng laptop" |
-| `parser_train.jsonl` | 22,950 | Category classifier training queries |
-
-### Triplet Hardness Levels
-
-| Level | Description | % of data |
-|-------|-------------|-----------|
-| L1 | Different category entirely (easy negative) | 10% |
-| L2 | Same category, different subcategory | 20% |
-| L3 | Same subcategory, different brand/attributes | 35% |
-| L4 | Same subcategory + brand, different color/size | 35% |
-| Adversarial | Context-word confusion (ba lô đựng laptop ≠ laptop) | ~5% |
-
-### Stage 0 — CategoryClassifier
-
-```bash
-python3 scripts/train_pipeline.py --stage 0 --epochs 20
-# Best val_acc: 0.947
-# Checkpoint: checkpoints/stage0/category_clf.pt
-```
-
-### Stage 2 — BiEncoder (4GB GPU, frozen encoders)
-
-```bash
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-python3 scripts/train.py \
-  --config configs/config_adversarial.yaml \
-  --model biencoder \
-  --resume checkpoints/biencoder/checkpoint_best.pt
-# ~3 epochs, ~717 steps, ~4 minutes on RTX 3050
-# Checkpoint: checkpoints/biencoder/checkpoint_best.pt
-```
-
-> **Why frozen encoders?** GPU VRAM = 4GB. Full BiEncoder + Adam optimizer ≈ 5GB.
-> Freezing text + image encoders leaves only the 400K-param fusion head trainable → fits 4GB.
-
-### Full pipeline (from scratch)
-
-```bash
-python3 scripts/generate_large_dataset.py
-python3 scripts/build_index.py
-python3 scripts/train_pipeline.py --stage all --epochs 20
-python3 scripts/build_index.py \
-  --checkpoint checkpoints/biencoder/checkpoint_best.pt
-```
-
----
-
-## ProductCanonicalizer
-
-Runs at index build time (`build_index.py`). Parses seller text to extract structured attributes used by Stage 3 attribute scoring.
-
-```python
-canonicalizer = ProductCanonicalizer()
-attrs = canonicalizer.canonicalize(
-    title="Ba lô đen size M Nike",
-    description="..."
-)
-# → {"color": "black", "size": "M", "gender": None,
-#    "brand": "nike", "product_type": "backpack", "condition": None}
-```
-
----
-
-## Graded Attribute Scoring (Stage 3)
-
-| Attribute | Exact | Partial | Miss |
-|-----------|-------|---------|------|
-| color | 1.0 | 0.5 (same color family) | 0.0 |
-| size | 1.0 | 0.7 (adjacent: M↔L) | 0.0 |
-| gender | 1.0 | 0.7 (unisex) | 0.0 |
-| brand | 1.0 | — | 0.0 |
-| product_type | 1.0 | — | 0.0 |
-
-Color families: `{red, pink, coral}`, `{blue, navy, teal}`, `{black, charcoal, dark_gray}`, etc.
-
----
-
-## API
-
-```
-POST /search
+**Request:**
+```json
 {
-  "query": "laptop sinh viên giá rẻ",
-  "top_k": 10,
-  "price_max": 8000000
+  "query": "title: Cần mua laptop\ncategory: Electronics\n...",
+  "candidates": [
+    { "id": "listing-uuid-1", "text": "title: MacBook Pro\ncategory: Electronics\n..." },
+    { "id": "listing-uuid-2", "text": "title: Dell XPS\n..." }
+  ]
 }
+```
 
-→ {
+**Response:**
+```json
+{
   "results": [
-    {
-      "rank": 1,
-      "product_id": "p0001",
-      "title": "Lenovo ThinkPad T14s RAM 16GB",
-      "subcategory": "laptop",
-      "price": 7500000,
-      "rerank_score": 0.0161,
-      "why_this_result": ["price within budget", "match product_type=laptop"],
-      "intent_signals": {
-        "price_ok": true,
-        "attribute_hits": {"product_type": 1.0}
-      }
-    }
-  ],
-  "parsed_query": {
-    "normalized": "laptop sinh vien gia re",
-    "product_type": {"raw": "laptop", "normalized": "laptop"},
-    "top_category": "electronics"
+    { "id": "listing-uuid-1", "score": 0.757 },
+    { "id": "listing-uuid-2", "score": 0.612 }
+  ]
+}
+```
+
+- Score range: 0.0–1.0 (cosine similarity)
+- Text limit: 512 characters per query/candidate
+- Latency: ~50–150ms for up to 20 candidates
+
+---
+
+## `/vision/extract` — Florence-2 Image Analysis
+
+Called after a listing image is uploaded. Extracts structured attributes stored in `ProofAsset.aiAttributes`.
+
+**Request:**
+```json
+{
+  "image_url": "https://...",
+  "tasks": ["detailed_caption", "ocr", "object_detection"]
+}
+```
+
+**Response:**
+```json
+{
+  "attributes": {
+    "detailed_caption": "The image shows an Apple MacBook Pro 13-inch...",
+    "ocr": "MacBook Pro",
+    "object_detection": "laptop, keyboard, computer"
   }
 }
 ```
 
+These attributes are later included in `buildListingText()` as the `vision:` field, improving semantic matching accuracy.
+
+**Supported tasks:** `caption`, `detailed_caption`, `ocr`, `object_detection`, `dense_caption`
+
 ---
 
-## Integration with Next.js
+## `/vision/filter` — CLIP Image Filter
 
-```typescript
-// lib/matching/ai/semantic-search.ts
-export async function semanticSearch(query: string, priceMax?: number) {
-  const res = await fetch(`${process.env.AI_SERVICE_URL}/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, top_k: 20, price_max: priceMax }),
-  })
-  return res.json()
+Filters a list of image URLs by relevance to a text query.
+
+**Request:**
+```json
+{
+  "image_urls": ["https://...", "https://..."],
+  "query": "laptop computer",
+  "threshold": 0.20
 }
 ```
 
-Environment variable: `AI_SERVICE_URL=http://localhost:8000` (dev) or Docker/VPS URL (prod).
+---
+
+## `/stage0/parse` — Query Understanding
+
+Parses a demand description to extract structured constraints for future Stage 0 demand enrichment.
+
+**Request:**
+```json
+{ "query": "Cần mua laptop cho sinh viên, budget 15-20 triệu" }
+```
+
+**Response:**
+```json
+{
+  "enriched_query": "laptop student 15000000-20000000 VND",
+  "hard_constraints": { "budget_max": 20000000 },
+  "soft_preferences": { "condition": "good", "category": "Electronics" }
+}
+```
+
+---
+
+## AiCallLog
+
+Every call to the AI service (except `/health` and `/stats`) is logged automatically:
+
+```typescript
+// ai.service.ts — fire-and-forget in finally block
+prisma.aiCallLog.create({
+  data: { endpoint, inputData, outputData, latencyMs, error }
+})
+```
+
+Query: `GET /api/ai/call-logs?endpoint=/score-pairs`
+
+---
+
+## Running Locally
+
+```bash
+cd multimodal-matching
+source .venv/bin/activate
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Or via Docker:
+```bash
+docker-compose up ai
+```
+
+**Required env:**
+```
+AI_SERVICE_URL=http://localhost:8000   # in backend/.env
+```
+
+---
+
+## Florence-2 Known Issues
+
+Florence-2-base requires `transformers==4.44.2` (not 5.x). Three cache locations must have the patched `modeling_florence2.py`:
+
+- `~/.cache/huggingface/hub/models--microsoft--Florence-2-base/snapshots/.../`
+- `~/.cache/huggingface/modules/transformers_modules/microsoft/Florence-2-base/.../`
+- `~/.cache/huggingface/modules/transformers_modules/microsoft/Florence_hyphen_2_hyphen_base/.../`
+
+Key patches applied:
+- `flash_attn` imports in `try/except`
+- `linspace(…, device='cpu')`
+- `EncoderDecoderCache` → legacy tuple conversion
+- `model.tie_weights()` after `.to(device)`
+- `attn_implementation="eager"` in `from_pretrained()`
