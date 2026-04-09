@@ -12,6 +12,8 @@ const SCORE_LABELS: Record<string, string> = {
   location:   'Location',
   quantity:   'Quantity',
   aiSemantic: 'AI semantic',
+  textScore:  'Text similarity',
+  finalScore: 'Final score',
 }
 
 const CONFIDENCE_STYLE: Record<string, string> = {
@@ -77,7 +79,11 @@ export default function MatchDetailPage() {
     </div>
   )
 
-  const breakdown: Record<string, number> = match.scoreBreakdown ?? {}
+  const rawBreakdown: Record<string, unknown> = match.scoreBreakdown ?? {}
+  // Keep only numeric entries — skip nested objects like { penalties: {...} }
+  const breakdown: Record<string, number> = Object.fromEntries(
+    Object.entries(rawBreakdown).filter((entry): entry is [string, number] => typeof entry[1] === 'number')
+  )
   const demand  = match.demandRequest
   const listing = match.productListing
 

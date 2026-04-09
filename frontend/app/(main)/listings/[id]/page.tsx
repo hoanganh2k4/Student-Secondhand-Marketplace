@@ -171,7 +171,7 @@ export default function ListingDetailPage() {
           </div>
           <div className="flex items-center justify-between text-[13px]">
             <span className="text-[#4B5563]">Condition</span>
-            <span className="font-medium text-[#111827]">{listing.condition.replace('_', ' ')}</span>
+            <span className="font-medium text-[#111827]">{listing.condition?.replace('_', ' ') ?? '—'}</span>
           </div>
           <div className="flex items-center justify-between text-[13px]">
             <span className="text-[#4B5563]">Quantity</span>

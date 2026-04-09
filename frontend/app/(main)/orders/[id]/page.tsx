@@ -10,6 +10,14 @@ const STATUS_STEP: Record<string, number> = {
   created: 0, in_progress: 1, completed: 2, cancelled: -1, disputed: -1,
 }
 
+// Timeline stages shown in the progress bar
+const TIMELINE_STAGES = [
+  { label: 'Created',     key: 'created' },
+  { label: 'In Progress', key: 'in_progress' },
+  { label: 'Completed',   key: 'completed' },
+  { label: 'Success',     key: 'success' },
+]
+
 const STATUS_COLOR: Record<string, string> = {
   created:     'bg-[#EFF6FF] text-[#2563EB]',
   in_progress: 'bg-[#FEF3C7] text-[#D97706]',
@@ -102,7 +110,11 @@ export default function OrderDetailPage() {
     </div>
   )
 
-  const stepIdx   = STATUS_STEP[order.status] ?? 0
+  // "success" = completed + both confirmed (or review/dispute submitted = past success)
+  const isSuccess  = order.status === 'completed' &&
+    order.buyerConfirmedComplete && order.sellerConfirmedComplete
+  const effectiveStatus = isSuccess ? 'success' : order.status
+  const stepIdx   = isSuccess ? 3 : (STATUS_STEP[order.status] ?? 0)
   const iAmBuyer  = myId === order.buyerUserId
   const iAmSeller = myId === order.sellerUserId
   const iHaveConfirmed = iAmBuyer ? order.buyerConfirmedComplete : order.sellerConfirmedComplete
@@ -123,16 +135,56 @@ export default function OrderDetailPage() {
       <div className="px-4 py-6 space-y-6">
         {/* Timeline */}
         {order.status !== 'cancelled' && order.status !== 'disputed' && (
-          <div className="flex items-center gap-2">
-            {['Created', 'In Progress', 'Completed'].map((label, i) => (
-              <div key={label} className="flex items-center gap-1 flex-1">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${i <= stepIdx ? 'bg-[#2563EB] text-white' : 'bg-[#E5E7EB] text-[#9CA3AF]'}`}>
-                  {i < stepIdx ? <CheckCircle className="w-3.5 h-3.5" /> : i + 1}
+          <div className="flex items-center">
+            {TIMELINE_STAGES.map((stage, i) => {
+              const done    = i < stepIdx
+              const current = i === stepIdx
+              const success = stage.key === 'success' && isSuccess
+              return (
+                <div key={stage.key} className="flex items-center flex-1 last:flex-none">
+                  <div className="flex flex-col items-center gap-1">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 transition-all
+                      ${success        ? 'bg-[#16A34A] text-white ring-2 ring-[#DCFCE7] ring-offset-1'
+                      : done           ? 'bg-[#2563EB] text-white'
+                      : current        ? 'bg-[#2563EB] text-white ring-2 ring-[#BFDBFE] ring-offset-1'
+                      : 'bg-[#E5E7EB] text-[#9CA3AF]'}`}
+                    >
+                      {success ? (
+                        <CheckCircle className="w-4 h-4" />
+                      ) : done ? (
+                        <CheckCircle className="w-3.5 h-3.5" />
+                      ) : (
+                        i + 1
+                      )}
+                    </div>
+                    <span className={`text-[10px] whitespace-nowrap
+                      ${success        ? 'text-[#16A34A] font-semibold'
+                      : current        ? 'text-[#2563EB] font-medium'
+                      : done           ? 'text-[#6B7280]'
+                      : 'text-[#9CA3AF]'}`}
+                    >
+                      {stage.label}
+                    </span>
+                  </div>
+                  {i < TIMELINE_STAGES.length - 1 && (
+                    <div className={`flex-1 h-px mx-1 mb-4 ${i < stepIdx ? 'bg-[#2563EB]' : 'bg-[#E5E7EB]'}`} />
+                  )}
                 </div>
-                <span className={`text-[11px] ${i === stepIdx ? 'text-[#2563EB] font-medium' : 'text-[#9CA3AF]'}`}>{label}</span>
-                {i < 2 && <div className="flex-1 h-px bg-[#E5E7EB] mx-1" />}
-              </div>
-            ))}
+              )
+            })}
+          </div>
+        )}
+
+        {/* Success banner */}
+        {isSuccess && (
+          <div className="rounded-2xl bg-[#F0FDF4] border border-[#86EFAC] p-5 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-[#16A34A] flex items-center justify-center flex-shrink-0">
+              <CheckCircle className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <p className="text-[15px] font-semibold text-[#15803D]">Giao dịch thành công!</p>
+              <p className="text-[13px] text-[#166534] mt-0.5">Cả hai bên đã xác nhận. Cảm ơn bạn đã sử dụng marketplace.</p>
+            </div>
           </div>
         )}
 

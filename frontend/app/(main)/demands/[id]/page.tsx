@@ -77,7 +77,7 @@ export default function DemandDetailPage() {
         </Link>
         <h1 className="text-[18px] font-semibold text-[#111827] flex-1 truncate">{demand.title}</h1>
         <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${STATUS_COLOR[demand.status] ?? 'bg-[#F3F4F6] text-[#6B7280]'}`}>
-          {demand.status.replace(/_/g, ' ')}
+          {demand.status?.replace(/_/g, ' ')}
         </span>
         {!['cancelled', 'fulfilled', 'expired'].includes(demand.status) && (
           <button
