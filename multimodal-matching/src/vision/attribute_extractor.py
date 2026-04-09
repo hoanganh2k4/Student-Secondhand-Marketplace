@@ -84,8 +84,11 @@ class FlorenceAttributeExtractor:
             torch_dtype=dtype,
             trust_remote_code=True,
             cache_dir=cache_dir,
+            attn_implementation="eager",
         )
         self.model.to(self.device)
+        # Tie lm_head → embedding weights (checkpoint doesn't save lm_head separately)
+        self.model.tie_weights()
         self.model.eval()
 
         logger.info("Florence-2-base ready.")
@@ -162,6 +165,12 @@ class FlorenceAttributeExtractor:
             return_tensors="pt",
         ).to(self.device, self.dtype)
 
+        # Force legacy tuple cache format — Florence-2 internals don't support
+        # the new EncoderDecoderCache object introduced in transformers ≥ 4.41
+        self.model._supports_cache_class = False
+        if hasattr(self.model, 'language_model'):
+            self.model.language_model._supports_cache_class = False
+
         generated = self.model.generate(
             input_ids=inputs["input_ids"],
             pixel_values=inputs["pixel_values"],
@@ -169,6 +178,8 @@ class FlorenceAttributeExtractor:
             num_beams=3,
             do_sample=False,
         )
+        if hasattr(generated, 'sequences'):
+            generated = generated.sequences
 
         raw = self.processor.batch_decode(generated, skip_special_tokens=False)[0]
         parsed = self.processor.post_process_generation(

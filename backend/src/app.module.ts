@@ -16,6 +16,7 @@ import { OrdersModule }         from './orders/orders.module'
 import { SchedulerModule }      from './scheduler/scheduler.module'
 import { AdminModule }          from './admin/admin.module'
 import { CategoriesModule }     from './categories/categories.module'
+import { AiModule }             from './ai/ai.module'
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { CategoriesModule }     from './categories/categories.module'
     SchedulerModule,
     AdminModule,
     CategoriesModule,
+    AiModule,
   ],
 })
 export class AppModule {}

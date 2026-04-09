@@ -355,6 +355,82 @@ def rebuild_index(req: IndexRebuildRequest):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MATCHING — Pairwise semantic similarity (no FAISS, text-only)
+# Model: reuses bi-encoder text encoder if pipeline loaded, else loads standalone
+# ══════════════════════════════════════════════════════════════════════════════
+
+_sentence_encoder = None
+
+
+def _get_sentence_encoder():
+    """Lazy-load a SentenceTransformer for cosine similarity scoring."""
+    global _sentence_encoder
+    if _sentence_encoder is not None:
+        return _sentence_encoder
+    # Reuse pipeline's text encoder if already loaded — avoids duplicate model in memory
+    if pipeline is not None:
+        _sentence_encoder = pipeline.bi_encoder.text_encoder.st_model
+        logger.info("score-pairs: reusing pipeline text encoder")
+        return _sentence_encoder
+    from sentence_transformers import SentenceTransformer as ST
+    model_name = os.getenv("TEXT_ENCODER", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    logger.info(f"score-pairs: loading standalone encoder '{model_name}'")
+    _sentence_encoder = ST(model_name)
+    return _sentence_encoder
+
+
+class ScorePairsRequest(BaseModel):
+    query:      str              = Field(..., min_length=1, max_length=512,
+                                         example="Cần laptop cũ dưới 5 triệu còn tốt")
+    candidates: list[dict]       = Field(..., description="List of {id: str, text: str} objects")
+
+
+@app.post(
+    "/score-pairs",
+    tags=["Matching — Pairwise Scoring"],
+    summary="Compute semantic similarity between a query and N candidate texts",
+)
+def score_pairs(req: ScorePairsRequest):
+    """
+    Encodes `query` and each `candidates[i].text` using the bi-encoder text encoder,
+    then returns cosine similarity scores (0–1) for every candidate.
+
+    Used by the backend matching engine to score demand↔listing pairs without
+    requiring a pre-built FAISS index.
+
+    - Works even if the full pipeline (FAISS index) is not loaded.
+    - Returns results sorted by score descending.
+    """
+    if not req.candidates:
+        return {"results": [], "total": 0}
+
+    encoder = _get_sentence_encoder()
+    t0      = time.perf_counter()
+
+    texts      = [req.query] + [c.get("text", "") for c in req.candidates]
+    embeddings = encoder.encode(texts, normalize_embeddings=True, convert_to_tensor=True)
+
+    import torch
+    query_emb = embeddings[0]           # (dim,)
+    cand_embs = embeddings[1:]          # (N, dim)
+    scores    = (cand_embs @ query_emb).tolist()  # cosine sim (already L2-normalised)
+
+    results = sorted(
+        [{"id": c.get("id"), "score": round(float(s), 4)}
+         for c, s in zip(req.candidates, scores)],
+        key=lambda x: x["score"],
+        reverse=True,
+    )
+
+    return {
+        "query":      req.query,
+        "results":    results,
+        "total":      len(results),
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # VISION — CLIP ViT-L/14  +  Florence-2-base
 # Loaded lazily on first request to keep startup fast when vision is not needed.
 # ══════════════════════════════════════════════════════════════════════════════
