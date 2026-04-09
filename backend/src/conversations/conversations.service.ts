@@ -114,6 +114,18 @@ export class ConversationsService {
     const otherId = conv.buyerUserId === userId ? conv.sellerUserId : conv.buyerUserId
     await this.notifications.notify(otherId, 'new_message', dto.body.slice(0, 100), 'conversation', conversationId)
 
+    // Log first-message interaction for LTR (fire-and-forget)
+    if (conv.matchId) {
+      const prior = await this.prisma.matchInteraction.count({
+        where: { matchId: conv.matchId, userId, action: 'messaged' },
+      })
+      if (prior === 0) {
+        this.prisma.matchInteraction.create({
+          data: { matchId: conv.matchId, userId, action: 'messaged', surface: 'direct' },
+        }).catch(() => null)
+      }
+    }
+
     return message
   }
 
@@ -360,6 +372,15 @@ export class ConversationsService {
 
     await this.notifications.notify(conv.buyerUserId,  'order_created', `Order created for ${total.toLocaleString()} ₫.`, 'order', order.id)
     await this.notifications.notify(conv.sellerUserId, 'order_created', `Order created for ${total.toLocaleString()} ₫.`, 'order', order.id)
+
+    // Log 'ordered' interaction for both participants (fire-and-forget)
+    if (conv.matchId) {
+      for (const uid of [conv.buyerUserId, conv.sellerUserId]) {
+        this.prisma.matchInteraction.create({
+          data: { matchId: conv.matchId, userId: uid, action: 'ordered', surface: 'direct' },
+        }).catch(() => null)
+      }
+    }
   }
 
   // ─── EVIDENCE REQUESTS ────────────────────────────────────────────────────

@@ -58,6 +58,11 @@ export class OffersService {
     const otherId = conv.buyerUserId === userId ? conv.sellerUserId : conv.buyerUserId
     await this.notifications.notify(otherId, 'offer_received', `New offer: ${dto.proposedPrice} × ${dto.quantity}`, 'offer', offer.id)
 
+    // Log 'offered' interaction for LTR (fire-and-forget)
+    this.prisma.matchInteraction.create({
+      data: { matchId, userId, action: 'offered', surface: 'direct' },
+    }).catch(() => null)
+
     return offer
   }
 
@@ -109,6 +114,15 @@ export class OffersService {
     await this.notifications.notify(offer.createdByUserId, 'offer_accepted', 'Your offer was accepted. Order created!', 'order', order.id)
     const otherId = offer.createdByUserId === conv.buyerUserId ? conv.sellerUserId : conv.buyerUserId
     await this.notifications.notify(otherId, 'order_created', 'Order created from accepted offer.', 'order', order.id)
+
+    // Log 'ordered' interaction for both participants (fire-and-forget)
+    if (offer.matchId) {
+      for (const uid of [conv.buyerUserId, conv.sellerUserId]) {
+        this.prisma.matchInteraction.create({
+          data: { matchId: offer.matchId, userId: uid, action: 'ordered', surface: 'direct' },
+        }).catch(() => null)
+      }
+    }
 
     return { offer: accepted, order }
   }
