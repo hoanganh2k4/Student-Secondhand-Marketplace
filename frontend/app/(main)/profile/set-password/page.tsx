@@ -2,21 +2,22 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Lock } from 'lucide-react'
+import { Lock, Eye, EyeOff } from 'lucide-react'
 
 export default function SetPasswordPage() {
   const router = useRouter()
-  const [password, setPassword] = useState('')
-  const [confirm, setConfirm]   = useState('')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
-  const [done, setDone]         = useState(false)
+  const [password, setPassword]   = useState('')
+  const [confirm, setConfirm]     = useState('')
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState('')
+  const [done, setDone]           = useState(false)
+  const [showPass, setShowPass]   = useState(false)
+  const [showConf, setShowConf]   = useState(false)
 
   const isValid = password.length >= 8 && password === confirm
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!isValid) return
     setLoading(true)
     setError('')
 
@@ -39,7 +40,7 @@ export default function SetPasswordPage() {
       }
 
       setDone(true)
-      setTimeout(() => router.push('/auth/logout'), 1500)
+      setTimeout(() => router.push('/'), 1200)
     } catch {
       setError('Network error. Please try again.')
     } finally {
@@ -58,7 +59,7 @@ export default function SetPasswordPage() {
           </div>
           <div>
             <h1 className="text-[24px] font-bold text-[#111827] mb-2">Password set!</h1>
-            <p className="text-[15px] text-[#4B5563]">Signing you out…</p>
+            <p className="text-[15px] text-[#4B5563]">Taking you to the marketplace…</p>
           </div>
         </div>
       </div>
@@ -90,33 +91,51 @@ export default function SetPasswordPage() {
             <label htmlFor="password" className="block text-[12px] font-medium text-[#4B5563]">
               New password
             </label>
-            <input
-              id="password"
-              type="password"
-              placeholder="Minimum 8 characters"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoFocus
-              className="w-full h-12 px-4 border border-[#D1D5DB] rounded-xl text-[15px] text-[#111827] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#2563EB] focus:border-2 transition-colors"
-            />
+            <div className="relative">
+              <input
+                id="password"
+                type={showPass ? 'text' : 'password'}
+                placeholder="Minimum 8 characters"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoFocus
+                className="w-full h-12 px-4 pr-11 border border-[#D1D5DB] rounded-xl text-[15px] text-[#111827] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#2563EB] focus:border-2 transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#4B5563]"
+              >
+                {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2">
             <label htmlFor="confirm" className="block text-[12px] font-medium text-[#4B5563]">
               Confirm password
             </label>
-            <input
-              id="confirm"
-              type="password"
-              placeholder="Repeat your password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              required
-              className={`w-full h-12 px-4 border rounded-xl text-[15px] text-[#111827] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#2563EB] focus:border-2 transition-colors ${
-                confirm && password !== confirm ? 'border-[#DC2626] border-2' : 'border-[#D1D5DB]'
-              }`}
-            />
+            <div className="relative">
+              <input
+                id="confirm"
+                type={showConf ? 'text' : 'password'}
+                placeholder="Repeat your password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                required
+                className={`w-full h-12 px-4 pr-11 border rounded-xl text-[15px] text-[#111827] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#2563EB] focus:border-2 transition-colors ${
+                  confirm && password !== confirm ? 'border-[#DC2626] border-2' : 'border-[#D1D5DB]'
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowConf(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9CA3AF] hover:text-[#4B5563]"
+              >
+                {showConf ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
             {confirm && password !== confirm && (
               <p className="text-[13px] text-[#DC2626]">Passwords do not match.</p>
             )}
@@ -131,7 +150,7 @@ export default function SetPasswordPage() {
             disabled={loading || !isValid}
             className="w-full h-11 bg-[#2563EB] hover:bg-[#1d4ed8] disabled:bg-[#D1D5DB] disabled:text-[#4B5563] text-white rounded-xl font-medium text-[15px] transition-colors"
           >
-            {loading ? 'Saving…' : 'Set password & sign out'}
+            {loading ? 'Saving…' : 'Set password & continue'}
           </button>
         </form>
 

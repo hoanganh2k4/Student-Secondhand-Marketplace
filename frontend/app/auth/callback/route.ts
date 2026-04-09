@@ -16,10 +16,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=invalid_token`)
   }
 
-  const { accessToken, needsOnboarding } = await res.json()
+  const { accessToken, needsOnboarding, hasPassword } = await res.json()
 
   const destination = needsOnboarding
     ? `${origin}/onboarding?token=${encodeURIComponent(accessToken)}`
+    : !hasPassword
+    ? `${origin}/profile/set-password`
     : `${origin}/`
 
   const response = NextResponse.redirect(destination)

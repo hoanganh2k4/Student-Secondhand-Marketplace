@@ -71,9 +71,10 @@ export class AuthService {
     // If user exists, issue access token immediately
     if (existingUser) {
       return {
-        accessToken:    this.issueAccessToken(existingUser.id, existingUser.email),
+        accessToken:     this.issueAccessToken(existingUser.id, existingUser.email),
         needsOnboarding: false,
-        user: existingUser,
+        hasPassword:     !!(existingUser.passwordHash),
+        user:            existingUser,
       }
     }
 

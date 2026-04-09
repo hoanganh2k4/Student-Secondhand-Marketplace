@@ -65,7 +65,7 @@ export default function OnboardingPage() {
     const { accessToken } = await res.json()
     await fetch(`/auth/set-cookie?token=${encodeURIComponent(accessToken)}`)
     setDone(true)
-    setTimeout(() => router.push('/'), 1200)
+    setTimeout(() => router.push('/profile/set-password'), 1200)
   }
 
   const isValid = name.trim() && university.trim()
@@ -80,7 +80,7 @@ export default function OnboardingPage() {
         </div>
         <div>
           <h1 className="text-[28px] font-bold text-[#111827] mb-2">You're all set!</h1>
-          <p className="text-[15px] text-[#4B5563]">Taking you to the marketplace…</p>
+          <p className="text-[15px] text-[#4B5563]">One more step — set your password…</p>
         </div>
       </div>
     )
