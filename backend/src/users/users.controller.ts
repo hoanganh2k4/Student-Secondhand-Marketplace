@@ -1,7 +1,11 @@
+import { ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth } from '@nestjs/swagger'
 import { Controller, Get, Patch, Body, UseGuards, Request } from '@nestjs/common'
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard'
 import { UsersService } from './users.service'
 
+@ApiBearerAuth('access-token')
+@ApiTags('Users')
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {

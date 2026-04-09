@@ -5,10 +5,10 @@ import {
   ForbiddenException,
   UnprocessableEntityException,
 } from '@nestjs/common'
-import { ConfigService }   from '@nestjs/config'
 import { PrismaService }   from '../prisma/prisma.service'
 import { MatchingService } from '../matching/matching.service'
 import { UploadService }   from '../upload/upload.service'
+import { AiService }       from '../ai/ai.service'
 import { transitionListing } from '../common/state-machines'
 import { CreateListingDto, UpdateListingDto } from './dto/listings.dto'
 
@@ -20,7 +20,7 @@ export class ListingsService {
     private readonly prisma:    PrismaService,
     private readonly matching:  MatchingService,
     private readonly upload:    UploadService,
-    private readonly config:    ConfigService,
+    private readonly ai:        AiService,
   ) {}
 
   async create(userId: string, dto: CreateListingDto) {
@@ -119,11 +119,6 @@ export class ListingsService {
   async publish(userId: string, id: string) {
     const listing = await this.findOneOwned(userId, id)
 
-    if (listing.proofCompletenessScore < 60) {
-      throw new UnprocessableEntityException(
-        `Proof completeness score must be at least 60 to publish (current: ${listing.proofCompletenessScore}).`,
-      )
-    }
 
     const nextStatus = transitionListing(listing.status, 'active')
 
@@ -221,19 +216,8 @@ export class ListingsService {
   }
 
   private async analyzeWithFlorence(assetId: string, imageUrl: string) {
-    const aiUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:8000')
     try {
-      const res = await fetch(`${aiUrl}/vision/extract`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          image_url: imageUrl,
-          tasks:     ['detailed_caption', 'ocr', 'object_detection'],
-        }),
-        signal: AbortSignal.timeout(15_000),
-      })
-      if (!res.ok) return
-      const aiAttributes = await res.json()
+      const aiAttributes = await this.ai.visionExtract(imageUrl, ['detailed_caption', 'ocr', 'object_detection']) as any
       await this.prisma.proofAsset.update({
         where: { id: assetId },
         data:  { aiAttributes },

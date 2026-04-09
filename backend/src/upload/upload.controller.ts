@@ -1,3 +1,5 @@
+import { ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth } from '@nestjs/swagger'
 import {
   Controller,
   Post,
@@ -13,6 +15,8 @@ import { UploadService } from './upload.service'
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'application/pdf']
 const MAX_SIZE_BYTES = 20 * 1024 * 1024 // 20 MB
 
+@ApiBearerAuth('access-token')
+@ApiTags('Upload')
 @Controller('uploads')
 @UseGuards(JwtAuthGuard)
 export class UploadController {

@@ -1,8 +1,12 @@
+import { ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth } from '@nestjs/swagger'
 import { Controller, Get, Post, Delete, Param, Body, UseGuards, Request } from '@nestjs/common'
 import { JwtAuthGuard }  from '../auth/guards/jwt-auth.guard'
 import { OffersService } from './offers.service'
 import { CreateOfferDto, CounterOfferDto } from './dto/offers.dto'
 
+@ApiBearerAuth('access-token')
+@ApiTags('Offers')
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class OffersController {

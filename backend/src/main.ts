@@ -10,12 +10,63 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('Student Marketplace API')
-    .setDescription('REST API for the Student Secondhand Marketplace')
+    .setDescription(
+      'REST API for the Student Secondhand Marketplace.\n\n' +
+      '**How to authenticate:**\n' +
+      '1. Call `POST /auth/login` with email + password\n' +
+      '2. Copy the `accessToken` from the response\n' +
+      '3. Click **Authorize** (🔒) → paste the token → **Authorize**',
+    )
     .setVersion('1.0')
-    .addCookieAuth('access_token')
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
+      'access-token',
+    )
     .build()
+
   const document = SwaggerModule.createDocument(app, config)
-  SwaggerModule.setup('api/docs', app, document)
+
+  // Apply Bearer auth globally to all operations that have security requirements
+  Object.values(document.paths).forEach((path: any) => {
+    Object.values(path).forEach((op: any) => {
+      if (op.security) {
+        op.security = [{ 'access-token': [] }]
+      }
+    })
+  })
+
+  SwaggerModule.setup('api/docs', app, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+      tagsSorter: 'alpha',
+      operationsSorter: 'method',
+      docExpansion: 'none',
+    },
+    customJsStr: `
+      // Auto-authorize after POST /auth/login
+      (function waitForSwagger() {
+        const interval = setInterval(function () {
+          const ui = window.ui || window.swaggerUIBundle;
+          if (!ui) return;
+          clearInterval(interval);
+
+          const origResponseInterceptor = ui.getConfigs().responseInterceptor;
+          ui.getConfigs().responseInterceptor = function (res) {
+            try {
+              if (res.url && res.url.includes('/auth/login') && res.status >= 200 && res.status < 300) {
+                const body = typeof res.body === 'string' ? JSON.parse(res.body) : res.body;
+                if (body && body.accessToken) {
+                  ui.preauthorizeApiKey('access-token', body.accessToken);
+                  console.info('[Swagger] Logged in — Bearer token set automatically.');
+                }
+              }
+            } catch (e) {}
+            return origResponseInterceptor ? origResponseInterceptor(res) : res;
+          };
+        }, 200);
+      })();
+    `,
+  })
 
   app.useGlobalPipes(
     new ValidationPipe({

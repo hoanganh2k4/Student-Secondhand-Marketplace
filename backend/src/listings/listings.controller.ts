@@ -1,3 +1,4 @@
+import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger'
 import {
   Controller,
   Get,
@@ -26,6 +27,8 @@ const ALLOWED_IMAGE_VIDEO = [
 ]
 const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
 
+@ApiBearerAuth('access-token')
+@ApiTags('Listings')
 @Controller('listings')
 @UseGuards(JwtAuthGuard)
 export class ListingsController {
@@ -75,6 +78,16 @@ export class ListingsController {
 
   @Post(':id/images')
   @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'Image or video file (JPEG, PNG, WEBP, MP4, MOV, WEBM — max 50 MB)' },
+      },
+      required: ['file'],
+    },
+  })
   async addImage(
     @Request() req: any,
     @Param('id') id: string,

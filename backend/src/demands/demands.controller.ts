@@ -1,3 +1,5 @@
+import { ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth } from '@nestjs/swagger'
 import {
   Controller,
   Get,
@@ -15,6 +17,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard'
 import { DemandsService } from './demands.service'
 import { CreateDemandDto, UpdateDemandDto } from './dto/demands.dto'
 
+@ApiBearerAuth('access-token')
+@ApiTags('Demands')
 @Controller('demands')
 @UseGuards(JwtAuthGuard)
 export class DemandsController {

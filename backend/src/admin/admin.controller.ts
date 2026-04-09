@@ -1,9 +1,13 @@
+import { ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth } from '@nestjs/swagger'
 import { Controller, Get, Patch, Post, Param, Body, Query, UseGuards, Request } from '@nestjs/common'
 import { JwtAuthGuard }  from '../auth/guards/jwt-auth.guard'
 import { AdminGuard }    from './admin.guard'
 import { AdminService }  from './admin.service'
 import { ResolveDisputeDto, SuspendUserDto } from './dto/admin.dto'
 
+@ApiBearerAuth('access-token')
+@ApiTags('Admin')
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminController {
