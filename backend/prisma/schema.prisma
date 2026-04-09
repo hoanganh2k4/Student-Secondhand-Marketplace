@@ -227,6 +227,7 @@ model User {
   evidenceRequests          EvidenceRequest[]
   offersCreated             Offer[]
   orderRequestsInitiated    OrderRequest[]    @relation("OrderRequestsInitiated")
+  matchInteractions         MatchInteraction[]
 
   @@map("users")
 }
@@ -400,9 +401,60 @@ model Match {
   conversation   Conversation?
   offers         Offer[]
   orders         Order[]
+  snapshot       MatchSnapshot?
+  interactions   MatchInteraction[]
 
   @@unique([demandRequestId, productListingId])
   @@map("matches")
+}
+
+// Snapshot of all scores + features at the moment the match was proposed.
+// Saved once per match — used as training features for future LTR model.
+model MatchSnapshot {
+  id               String   @id @default(uuid())
+  matchId          String   @unique @map("match_id")
+  modelVersion     String   @default("v1") @map("model_version")
+  rankPosition     Int      @map("rank_position")        // position in candidate list (1-based)
+  candidateSetSize Int      @map("candidate_set_size")   // total candidates scored this run
+  textScore        Float    @map("text_score")           // /score-pairs cosine similarity
+  visualScore      Float?   @map("visual_score")         // CLIP score if available
+  finalScore       Float    @map("final_score")          // after penalties
+  penaltiesApplied Json     @map("penalties_applied")    // e.g. {price: 0.5, condition: 0.8}
+  demandSnapshot   Json     @map("demand_snapshot")      // {text, enrichedQuery, constraints, budgetMax, preferredCondition}
+  listingSnapshot  Json     @map("listing_snapshot")     // {text, price, condition, category, hasImage, imageCount}
+  featureVector    Json     @map("feature_vector")       // all LTR features: priceRatio, conditionMatch, brandMatch, etc.
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  match        Match             @relation(fields: [matchId], references: [id])
+  interactions MatchInteraction[]
+
+  @@map("match_snapshots")
+}
+
+// Raw event stream — one row per user action on a match.
+// Aggregated into a single training label per (matchId, userId) before training.
+model MatchInteraction {
+  id         String   @id @default(uuid())
+  matchId    String   @map("match_id")
+  snapshotId String?  @map("snapshot_id")
+  userId     String   @map("user_id")
+  // action: impressed | detail_viewed | accepted | dismissed | messaged | offered | ordered
+  action     String
+  // surface: match_list | push_notification | home_feed | direct
+  surface    String?
+  sessionId  String?  @map("session_id")
+  metadata   Json?    // any extra context
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  match    Match          @relation(fields: [matchId], references: [id])
+  snapshot MatchSnapshot? @relation(fields: [snapshotId], references: [id])
+  user     User           @relation(fields: [userId], references: [id])
+
+  @@index([matchId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("match_interactions")
 }
 
 // ─── CONVERSATION ─────────────────────────────────────────────────────────────
@@ -602,4 +654,31 @@ model Notification {
   user User @relation(fields: [userId], references: [id])
 
   @@map("notifications")
+}
+
+model AiMatchLog {
+  id              String   @id @default(uuid())
+  triggeredBy     String   @map("triggered_by")   // 'demand' | 'listing'
+  sourceId        String   @map("source_id")       // demandId or listingId
+  sourceText      String   @map("source_text")
+  candidateCount  Int      @map("candidate_count")
+  results         Json                              // full /score-pairs response
+  matchesCreated  Int      @map("matches_created")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("ai_match_logs")
+}
+
+model AiCallLog {
+  id         String   @id @default(uuid())
+  endpoint   String                          // e.g. "/score-pairs", "/vision/extract"
+  inputData  Json     @map("input_data")     // request body sent to AI service
+  outputData Json?    @map("output_data")    // response from AI service
+  latencyMs  Float?   @map("latency_ms")     // round-trip ms (null if errored before response)
+  error      String?                         // error message if call failed
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([endpoint])
+  @@index([createdAt])
+  @@map("ai_call_logs")
 }
