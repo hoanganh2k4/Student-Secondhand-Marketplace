@@ -15,6 +15,90 @@ export class MatchesService {
     private readonly notifications:  NotificationsService,
   ) {}
 
+  async getSnapshot(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where:   { id: matchId },
+      include: {
+        demandRequest:  { include: { buyerProfile: true } },
+        productListing: { include: { sellerProfile: true } },
+        snapshot:       true,
+      },
+    })
+    if (!match) throw new NotFoundException('Match not found.')
+    await this.assertParticipant(userId, match)
+    if (!match.snapshot) throw new NotFoundException('No snapshot for this match yet.')
+    return match.snapshot
+  }
+
+  async getInteractions(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where:   { id: matchId },
+      include: {
+        demandRequest:  { include: { buyerProfile: true } },
+        productListing: { include: { sellerProfile: true } },
+      },
+    })
+    if (!match) throw new NotFoundException('Match not found.')
+    await this.assertParticipant(userId, match)
+
+    const interactions = await this.prisma.matchInteraction.findMany({
+      where:   { matchId },
+      orderBy: { createdAt: 'asc' },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    })
+
+    const ACTION_SCORE: Record<string, number> = {
+      ordered: 1.0, offered: 0.9, messaged: 0.7,
+      accepted: 0.5, dismissed: 0.0,
+      detail_viewed: 0.3, impressed: 0.2,
+    }
+    const label = interactions.length === 0
+      ? null
+      : interactions.reduce((best, i) => {
+          const v = ACTION_SCORE[i.action] ?? 0.2
+          return v > best ? v : best
+        }, 0.2)
+
+    return { matchId, label, interactionCount: interactions.length, interactions }
+  }
+
+  async logInteraction(
+    userId:     string,
+    matchId:    string,
+    action:     string,
+    surface?:   string,
+    sessionId?: string,
+    metadata?:  any,
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where:   { id: matchId },
+      include: {
+        demandRequest:  { include: { buyerProfile: true } },
+        productListing: { include: { sellerProfile: true } },
+        snapshot:       true,
+      },
+    })
+    if (!match) throw new NotFoundException('Match not found.')
+    await this.assertParticipant(userId, match)
+
+    const validActions = ['impressed', 'detail_viewed', 'accepted', 'dismissed', 'messaged', 'offered', 'ordered']
+    if (!validActions.includes(action)) {
+      throw new UnprocessableEntityException(`Invalid action '${action}'. Must be one of: ${validActions.join(', ')}`)
+    }
+
+    return this.prisma.matchInteraction.create({
+      data: {
+        matchId,
+        snapshotId: match.snapshot?.id ?? null,
+        userId,
+        action,
+        surface:    surface   ?? null,
+        sessionId:  sessionId ?? null,
+        metadata:   metadata  ?? null,
+      },
+    })
+  }
+
   async findOne(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where:   { id: matchId },
