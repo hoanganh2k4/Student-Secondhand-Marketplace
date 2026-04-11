@@ -1,21 +1,38 @@
 # Frontend — Student Secondhand Marketplace
 
-Next.js 16 App Router, TypeScript, Tailwind CSS. Mobile-first PWA-style UI.
+Next.js 16 · React 19 · TypeScript · Tailwind CSS v4  
+Mobile-first UI · Port: **3000**
 
 ---
 
-## Running
+## Setup
 
 ```bash
 cd frontend
 npm install
+```
+
+Tạo `.env.local`:
+```env
+NEXT_PUBLIC_API_URL=http://localhost:4000/api
+```
+
+```bash
 npm run dev   # http://localhost:3000
 ```
 
-Requires `.env.local`:
-```
-NEXT_PUBLIC_API_URL=http://localhost:4000/api
-```
+Yêu cầu backend chạy trên port 4000.
+
+---
+
+## NPM Scripts
+
+| Script | What it does |
+|--------|-------------|
+| `npm run dev` | Dev server với hot reload |
+| `npm run build` | Production build |
+| `npm run start` | Serve production build |
+| `npm run lint` | ESLint |
 
 ---
 
@@ -33,14 +50,14 @@ frontend/
 │   │   ├── page.tsx                  ← Home feed (listings + demands)
 │   │   ├── listings/
 │   │   │   ├── page.tsx              ← My listings list
-│   │   │   ├── new/page.tsx          ← Create listing form
-│   │   │   └── [id]/page.tsx         ← Listing detail + matches
+│   │   │   ├── new/page.tsx          ← Create listing form + image upload
+│   │   │   └── [id]/page.tsx         ← Listing detail + match list
 │   │   ├── demands/
 │   │   │   ├── page.tsx              ← My demands list
 │   │   │   ├── new/page.tsx          ← Create demand form
-│   │   │   └── [id]/page.tsx         ← Demand detail + matches
+│   │   │   └── [id]/page.tsx         ← Demand detail + match list
 │   │   ├── matches/
-│   │   │   └── [id]/page.tsx         ← Match detail, accept/decline
+│   │   │   └── [id]/page.tsx         ← Match detail: AI scoring, accept/decline
 │   │   ├── conversations/
 │   │   │   ├── page.tsx              ← Conversation inbox
 │   │   │   └── [id]/page.tsx         ← Chat thread + OrderRequestCard
@@ -62,27 +79,27 @@ frontend/
 
 ---
 
-## Auth Flow
+## Auth
 
-- Auth cookie (`access_token`) is set by the backend as httpOnly
-- All API calls go through `/api/proxy/[...path]` which forwards the cookie to the backend
-- On page load, pages call `GET /api/proxy/auth/me` to check auth; redirect to `/auth/login` if not OK
-- Logout: navigate to `/auth/logout` (proxy endpoint that clears cookie)
+- Backend set `access_token` là httpOnly cookie
+- Tất cả API call đi qua `/api/proxy/[...path]` — proxy tự đính cookie vào request backend
+- Khi load page, gọi `GET /api/proxy/auth/me` để check auth; redirect về `/auth/login` nếu 401
+- Logout: navigate tới proxy endpoint xóa cookie
 
 ---
 
 ## Proxy Route
 
-`app/api/proxy/[...path]/route.ts` — catch-all that:
-1. Forwards the incoming request (method, headers, body) to `NEXT_PUBLIC_API_URL + path`
-2. Attaches the `access_token` cookie from the browser
-3. Returns the backend's response verbatim
+`app/api/proxy/[...path]/route.ts` — catch-all:
+1. Forward request (method + headers + body) tới `NEXT_PUBLIC_API_URL + path`
+2. Đính `access_token` cookie từ browser
+3. Return response từ backend nguyên vẹn
 
-This keeps the backend URL server-side and avoids CORS issues.
+Giữ backend URL ở server-side, tránh CORS.
 
 ---
 
-## WebSocket Hooks
+## WebSocket
 
 ### useConversationSocket
 
@@ -99,57 +116,69 @@ useConversationSocket(conversationId, {
 
 ```typescript
 useOrderSocket(orderId, (partialOrder) => void)
-// Merges into local order state on every status update
+// Merges vào local order state khi có status update
 ```
 
-Both hooks handle React StrictMode double-invocation safely (local socket variable + cancelled flag).
+Cả hai hook xử lý React StrictMode double-invocation (local socket variable + cancelled flag).
 
 ---
 
 ## Key Pages
 
+### Match Detail (`/matches/[id]`)
+
+- Score overview: `matchScore` (0–100) + confidence badge + rank trong run
+- AI Scoring section: textScore bar (SentenceTransformer), visualScore nếu có (CLIP), finalScore + penalty warning
+- Match Features: price fit bar, condition match badge, image/vision status
+- Demand vs Listing comparison panel (từ MatchSnapshot)
+- Model Info: version, rank position, feature flags
+- Accept / Decline buttons (chỉ hiện khi còn `canStillAct`)
+- Snapshot fetch là non-blocking — page load nhanh, scoring data hiện sau
+
 ### Conversation (`/conversations/[id]`)
 
-- Realtime chat via `useConversationSocket`
-- Messages are displayed left (other) / right (self, blue) based on `myId`
-- System messages with body `__order_request:<id>__` render as `OrderRequestCard` components
-- `OrderRequestCard` shows different forms to seller vs buyer:
-  - **Seller:** fills price + quantity
-  - **Buyer:** fills phone, email, delivery address, fulfillment method
-- "Order" button only appears when no active OrderRequest (pending/accepted) exists
+- Realtime chat qua `useConversationSocket`
+- Messages left (đối phương) / right (mình, xanh)
+- System message `__order_request:<id>__` render thành `OrderRequestCard`
+- `OrderRequestCard` hiện form khác cho seller vs buyer:
+  - **Seller:** điền price + quantity
+  - **Buyer:** điền phone, email, địa chỉ, phương thức giao nhận
+- Nút "Order" chỉ hiện khi không có OrderRequest đang pending/accepted
 
 ### Orders (`/orders`)
 
-- Two tabs: **Đang mua** (buyerUserId = myId) and **Đang bán** (sellerUserId = myId)
-- Badge count on each tab
+- 2 tabs: **Đang mua** (`buyerUserId = myId`) / **Đang bán** (`sellerUserId = myId`)
+- Badge count trên mỗi tab
 
 ### Order Detail (`/orders/[id]`)
 
-- Realtime status updates via `useOrderSocket`
-- Shows completion confirmation panel (buyer ✓ / seller ✓)
-- "Xác nhận hoàn thành" button only shown if current user hasn't confirmed yet
-- Review form (stars + comment) after completion
-- Dispute form (within 48h of completion)
+- Realtime status qua `useOrderSocket`
+- 4-stage timeline: Created → In Progress → Completed → Success
+- "Success" stage hiện khi cả buyer lẫn seller đều confirm complete
+- Completion confirmation panel (buyer ✓ / seller ✓)
+- Review form (stars + comment) sau khi completed
+- Dispute form (trong 48h sau completion)
 
 ### Profile (`/profile`)
 
-- Fetches user, listings, demands, orders in parallel
-- Real stats: completed orders, active listings, active demands
-- Rating from `sellerProfile.sellerRating` or `buyerProfile.buyerRating`
-- Last 3 listings, demands, and orders with status badges
+- Fetch user, listings, demands, orders song song
+- Stats thực: completed orders, active listings, active demands
+- Rating từ `sellerProfile.sellerRating` hoặc `buyerProfile.buyerRating`
+- 3 listings, demands, orders gần nhất với status badge
 
 ---
 
 ## API Calls
 
-All go through `/api/proxy/` which forwards to the NestJS backend at `NEXT_PUBLIC_API_URL`.
+Tất cả qua `/api/proxy/` → NestJS backend tại `NEXT_PUBLIC_API_URL`.
 
 | Resource | Base path |
 |----------|-----------|
 | Auth | `/api/proxy/auth/me`, `/api/proxy/auth/login`, `/api/proxy/auth/register` |
 | Listings | `/api/proxy/listings` |
 | Demands | `/api/proxy/demands` |
-| Matches | `/api/proxy/matches` |
+| Matches | `/api/proxy/matches/:id`, `/api/proxy/matches/:id/snapshot` |
 | Conversations | `/api/proxy/conversations` |
 | Orders | `/api/proxy/orders` |
 | Notifications | `/api/proxy/notifications` |
+| Categories | `/api/proxy/categories` |
