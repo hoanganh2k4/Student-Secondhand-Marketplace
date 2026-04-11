@@ -1,7 +1,243 @@
-# Multimodal Product Matching
+# Multimodal Matching — AI Service
 
-Pipeline 4 stage cho Vietnamese secondhand marketplace.  
-Mỗi stage làm **một việc duy nhất**, có API endpoint riêng để test độc lập.
+FastAPI service chạy trên port **8000**.  
+Được NestJS backend gọi để score demand↔listing pairs, extract image attributes, và filter images.
+
+> **Hai phần trong repo này:**
+> 1. **Production endpoints** — `/score-pairs`, `/vision/extract`, `/vision/filter` — dùng trực tiếp bởi backend
+> 2. **Research pipeline** — 4-stage retrieval pipeline (Stage 0–3) — dùng để nghiên cứu và train model
+
+---
+
+## Chạy nhanh (production mode)
+
+```bash
+cd multimodal-matching
+pip install -r requirements.txt
+
+# Chỉ cần SentenceTransformer + Florence-2 + CLIP — không cần FAISS index
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**Swagger UI:** `http://localhost:8000/docs`
+
+Các model được tải **lazy** (lần đầu gọi endpoint), nên startup nhanh.
+
+---
+
+## Endpoints dùng bởi backend
+
+### `POST /score-pairs` — Semantic similarity
+
+Dùng **SentenceTransformer** (`paraphrase-multilingual-MiniLM-L12-v2`) để tính cosine similarity giữa demand text và các listing text candidates.
+
+```bash
+curl -X POST http://localhost:8000/score-pairs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "title: Cần laptop sinh viên\ncategory: Laptop\ndescription: Dùng lập trình, budget 8 triệu",
+    "candidates": [
+      {"id": "uuid-1", "text": "title: MacBook Air M1\ncategory: Laptop\ndescription: Máy đẹp, pin tốt"},
+      {"id": "uuid-2", "text": "title: Áo khoác nam\ncategory: Thời trang"}
+    ]
+  }'
+```
+
+```json
+{
+  "query": "...",
+  "results": [
+    {"id": "uuid-1", "score": 0.7695},
+    {"id": "uuid-2", "score": 0.1203}
+  ],
+  "total": 2,
+  "latency_ms": 142.5
+}
+```
+
+> Scores là cosine similarity (0–1), sorted descending.  
+> Text format: `title: ...\ncategory: ...\ndescription: ...\nvision: ...` (hard-cap 512 chars)
+
+---
+
+### `POST /vision/extract` — Florence-2 image attributes
+
+Dùng **Florence-2-base** (232M params, CPU-friendly) để extract caption, OCR, object detection từ ảnh sản phẩm.
+
+```bash
+curl -X POST http://localhost:8000/vision/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_url": "http://localhost:9000/marketplace-assets/listings/abc.jpg",
+    "tasks": ["caption", "ocr"]
+  }'
+```
+
+```json
+{
+  "image_url": "...",
+  "attributes": {
+    "caption": "A silver laptop on a white desk",
+    "ocr": "MacBook Air M1"
+  },
+  "latency_ms": 830.2
+}
+```
+
+> Tasks: `caption`, `detailed_caption`, `ocr`, `object_detection`, `dense_caption`  
+> OCR + caption được dùng làm `vision:` field trong listing text trước khi gửi tới `/score-pairs`
+
+---
+
+### `POST /vision/filter` — CLIP image relevance
+
+Dùng **CLIP ViT-L/14** để filter ảnh theo query text.
+
+```bash
+curl -X POST http://localhost:8000/vision/filter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_urls": ["http://localhost:9000/.../img1.jpg"],
+    "query": "laptop sinh viên",
+    "threshold": 0.20
+  }'
+```
+
+```json
+{
+  "query": "laptop sinh viên",
+  "threshold": 0.20,
+  "results": [{"url": "...", "score": 0.3142}],
+  "latency_ms": 210.4
+}
+```
+
+---
+
+### `GET /health`
+
+```json
+{
+  "status": "ok",
+  "stage0_ready": true,
+  "pipeline_ready": false,
+  "sentence_encoder_loaded": true,
+  "vision_enabled": true
+}
+```
+
+---
+
+## Biến môi trường
+
+| Biến | Mặc định | Mô tả |
+|------|----------|--------|
+| `VISION_ENABLED` | `true` | Tắt để không load CLIP + Florence-2 |
+| `MODEL_CACHE_DIR` | HuggingFace default | Cache directory cho model weights |
+| `BIENCODER_CKPT` | *(none)* | Fine-tuned BiEncoder checkpoint (optional) |
+| `INDEX_PATH` | `models/faiss_index` | FAISS index path (chỉ cần cho research pipeline) |
+| `CONFIG_PATH` | `configs/config.yaml` | Config cho research pipeline |
+
+---
+
+## LTR Training Script
+
+```bash
+# Export training data từ backend, train XGBoost LambdaRank
+python scripts/train_ltr.py \
+  --api-url http://localhost:4000 \
+  --output models/ltr_model.json
+
+# Preview stats mà không train
+python scripts/train_ltr.py --stats-only
+```
+
+Cần ít nhất 50+ matched pairs với user interactions (`messaged`, `offered`, `ordered`) để train có ý nghĩa.
+
+---
+
+## Docker
+
+```bash
+# Build
+docker build -t multimodal-matching .
+
+# Chạy (không cần FAISS index cho production endpoints)
+docker run -p 8000:8000 \
+  -e VISION_ENABLED=true \
+  -v $(pwd)/models:/app/models \
+  multimodal-matching
+
+# Hoặc dùng docker-compose
+docker-compose up api
+```
+
+---
+
+## Research Pipeline (4 Stage)
+
+Pipeline nghiên cứu đầy đủ — không dùng trực tiếp bởi backend nhưng hữu ích để cải thiện matching quality.
+
+```
+raw query
+   │
+   ▼
+Stage 0 — Query Understanding (rule-based + KeyBERT + MLP category classifier)
+   │       → ParsedQuery {hard_constraints, soft_preferences, enriched_query}
+   ▼
+Stage 1 — Category Router + Pre-filter
+   │       → chọn sub-index (fashion, electronics, ...) hoặc full index
+   ▼
+Stage 2 — Hybrid Dense + Lexical Retrieval
+   │       FAISS (BiEncoder) + BM25 → RRF merge → top-100 candidates
+   ▼
+Stage 3 — Intent-Aware Reranker
+           price/condition penalty + graded attribute match + diversity → top-10
+```
+
+### Chạy research pipeline
+
+```bash
+# 1. Generate sample data
+python scripts/generate_sample_data.py --n_products 500 --n_triplets 1500
+python scripts/generate_enriched_data.py
+
+# 2. Build FAISS + BM25 index
+python scripts/build_index.py
+
+# 3. (Optional) Train bi-encoder
+python scripts/train_pipeline.py --model biencoder
+
+# 4. Rebuild index với model đã train
+python scripts/build_index.py --checkpoint checkpoints/biencoder/checkpoint_best.pt
+
+# 5. Start API (với pipeline loaded)
+BIENCODER_CKPT=checkpoints/biencoder/checkpoint_best.pt \
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+### Research endpoints
+
+| Method | Path | Mô tả |
+|--------|------|--------|
+| `POST` | `/stage0/parse` | Full ParsedQuery |
+| `POST` | `/stage0/keywords` | KeyBERT keywords only |
+| `POST` | `/stage1/route` | Category routing decision |
+| `POST` | `/stage2/retrieve` | Candidates trước rerank |
+| `POST` | `/search` | Full pipeline stages 0→3 |
+| `POST` | `/index/rebuild` | Rebuild FAISS từ catalog mới |
+| `GET`  | `/stats` | Index stats |
+
+---
+
+## Data (research pipeline)
+
+| File | Records | Mô tả |
+|------|---------|--------|
+| `data/processed/catalog.jsonl` | 900 | Products: electronics/fashion/books/vehicles/furniture/sports |
+| `data/processed/train.jsonl` | 2,975 | Triplets cho biencoder training |
+| `data/processed/val.jsonl` | 525 | Validation triplets |
+| `data/processed/parser_train.jsonl` | 6,800 | Queries + category labels cho CategoryClassifier |
 
 ```
 raw query
