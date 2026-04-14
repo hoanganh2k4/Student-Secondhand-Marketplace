@@ -76,9 +76,9 @@ export default function LoginPage() {
         return
       }
 
-      const { accessToken } = await res.json()
+      const { accessToken, user } = await res.json()
       await fetch(`/auth/set-cookie?token=${encodeURIComponent(accessToken)}`)
-      router.push('/')
+      router.push(user?.isAdmin ? '/admin' : '/')
     } catch {
       setError('Network error. Please try again.')
     } finally {
