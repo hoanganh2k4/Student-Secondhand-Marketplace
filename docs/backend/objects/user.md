@@ -16,13 +16,16 @@ Central identity record. Created on first login via Supabase Auth magic link.
 | emailVerified | Boolean | Must be true before any activity |
 | name | String | Display name |
 | phone | String? | Optional, for order coordination |
+| passwordHash | String? | bcrypt hash; null if magic-link only account |
 | status | `active \| suspended \| banned` | |
+| isAdmin | Boolean | `false` by default; grants access to `/api/admin/*` |
 | createdAt | DateTime | |
 | lastActiveAt | DateTime? | Used for inactivity detection |
 
 **Constraints:**
-- Email must match `ALLOWED_EMAIL_DOMAINS`
+- Email must match `ALLOWED_EMAIL_DOMAINS` (bypassed for seeded admin account)
 - Cannot create demands, listings, or send messages until `emailVerified = true`
+- `isAdmin = true` unlocks all `AdminGuard`-protected routes
 
 ---
 
@@ -84,6 +87,8 @@ Created automatically (upsert) when a user publishes their first ProductListing.
 | R-U3 | Max 10 active DemandRequests per BuyerProfile |
 | R-U4 | BuyerProfile and SellerProfile created lazily on first use |
 | R-U5 | `status = suspended/banned` blocks all API actions for that user |
+| R-U6 | `isAdmin = true` is required for all `/api/admin/*` routes (enforced by `AdminGuard`) |
+| R-U7 | Admin account (`admin@marketplace.com`) is auto-seeded on every backend startup via `seedAdmin()` in `main.ts` |
 
 ---
 

@@ -1,8 +1,24 @@
-# Admin Management — Demands, Listings, Orders
+# Admin Management
 
-> Scope: Thiết kế view-only cho admin quản lý demands, listings, orders
-> Hiện tại: Admin đã có quản lý Users và Disputes. Trang Demands/Listings/Orders **chưa được implement**.
-> Auth: `isAdmin: true` — guard `AdminGuard` áp dụng cho tất cả route `/api/admin`
+> Auth: `isAdmin: true` on `User` — `AdminGuard` applied to all `/api/admin/*` routes.
+> Login: `POST /auth/login` returns `user.isAdmin`; frontend redirects to `/admin` if true.
+
+## Implemented endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/admin/users` | List all users, filterable by `status` |
+| PATCH | `/api/admin/users/:id/suspend` | Set user status → `suspended` |
+| PATCH | `/api/admin/users/:id/ban` | Set user status → `banned` |
+| PATCH | `/api/admin/users/:id/reinstate` | Set user status → `active` |
+| GET | `/api/admin/disputes` | List all disputes |
+| PATCH | `/api/admin/disputes/:id/resolve` | Resolve a dispute with resolution + notes |
+| GET | `/api/admin/listings` | List all listings across all sellers |
+| PATCH | `/api/admin/listings/:id/remove` | Set listing status → `removed` |
+
+---
+
+## Planned endpoints — Demands, Listings detail, Orders
 
 ---
 

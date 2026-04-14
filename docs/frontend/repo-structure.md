@@ -14,9 +14,14 @@ frontend/
 ├── app/                                    # Next.js App Router root
 │   ├── (auth)/                             # Unauthenticated routes (no layout shell)
 │   │   ├── login/
-│   │   │   └── page.tsx                   # Email → magic link or password login
+│   │   │   └── page.tsx                   # Email → magic link or password login; redirects to /admin if isAdmin
 │   │   └── onboarding/
 │   │       └── page.tsx                   # Profile setup (name, role, university)
+│   │
+│   ├── (admin)/                            # Admin-only routes (no bottom nav)
+│   │   ├── layout.tsx                     # Minimal bg-gray layout
+│   │   └── admin/
+│   │       └── page.tsx                   # Admin panel: sticky header + isAdmin guard (redirects to / if not admin)
 │   │
 │   ├── (main)/                             # Authenticated routes (with nav shell)
 │   │   ├── layout.tsx                     # Bottom nav bar (5 tabs) + notification bell
@@ -48,16 +53,8 @@ frontend/
 │   │   │   ├── page.tsx                   # My profile + ratings + listings + demands
 │   │   │   └── set-password/
 │   │   │       └── page.tsx               # Set password before sign-out
-│   │   └── admin/
-│   │       ├── layout.tsx                 # Admin-only guard (redirect if not admin)
-│   │       ├── page.tsx                   # Admin overview dashboard
-│   │       ├── disputes/
-│   │       │   ├── page.tsx               # Disputes list
-│   │       │   └── [id]/page.tsx          # Dispute resolution view
-│   │       ├── listings/
-│   │       │   └── page.tsx               # Flag queue for listings
-│   │       └── users/
-│   │           └── page.tsx               # User management
+│   │   └── notifications/
+│   │       └── page.tsx                   # Notification list
 │   │
 │   └── api/                               # Next.js Route Handlers (proxy to NestJS)
 │       └── auth/
@@ -199,7 +196,7 @@ EC screens marked "stub only" have placeholder content — implement using the c
 
 - `(auth)` pages render without the bottom navigation shell.
 - `(main)` pages render with the navigation layout defined in `app/(main)/layout.tsx`.
-- `admin/` under `(main)` has its own nested layout that adds an admin-only guard.
+- `(admin)` is a separate route group with no bottom nav. The `/admin` page guards itself — fetches `/auth/me` on mount and redirects to `/` if `isAdmin` is false.
 
 ## Bottom Navigation (5 tabs)
 
