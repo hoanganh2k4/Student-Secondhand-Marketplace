@@ -27,7 +27,7 @@ interface BuyerForm   { phone: string; email: string; deliveryAddress: string; f
 function OrderRequestCard({
   orderRequest,
   myUserId,
-  iAmSeller,         // true = tôi là người bán, false = tôi là người mua
+  iAmSeller,         // true = I am the seller, false = I am the buyer
   onAccept,
   onReject,
   onSellerFill,
@@ -40,7 +40,8 @@ function OrderRequestCard({
   onReject: () => void
   onSellerFill: (f: SellerForm) => void
   onBuyerFill:  (f: BuyerForm)  => void
-}) {
+}
+) {
   const iAmInitiator = myUserId === orderRequest.initiatedByUserId
   const [sellerForm, setSellerForm] = useState<SellerForm>({ price: '', quantity: String(orderRequest.quantity ?? 1) })
   const [buyerForm,  setBuyerForm]  = useState<BuyerForm>({
@@ -101,20 +102,20 @@ function OrderRequestCard({
           <p className="text-[13px] text-[#DC2626] text-center">Order request was rejected.</p>
         )}
 
-        {/* ── SELLER fills price (accepted hoặc buyer đã fill rồi) ── */}
+        {/* ── SELLER fills price (accepted or buyer already filled) ── */}
         {iAmSeller && (status === 'accepted' || status === 'buyer_filled') && (
           <>
-            <p className="text-[13px] text-[#374151] font-medium">Điền giá bán:</p>
+            <p className="text-[13px] text-[#374151] font-medium">Set selling price:</p>
             <div className="flex gap-2">
               <div className="flex-1">
-                <label className="text-[11px] text-[#6B7280]">Giá (₫) *</label>
+                <label className="text-[11px] text-[#6B7280]">Price (₫) *</label>
                 <input type="number" placeholder="0"
                   className="w-full border border-[#D1D5DB] rounded-xl px-3 py-2 text-[14px] mt-0.5 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                   value={sellerForm.price}
                   onChange={e => setSellerForm(f => ({ ...f, price: e.target.value }))} />
               </div>
               <div className="w-20">
-                <label className="text-[11px] text-[#6B7280]">Số lượng</label>
+                <label className="text-[11px] text-[#6B7280]">Quantity</label>
                 <input type="number" min="1"
                   className="w-full border border-[#D1D5DB] rounded-xl px-3 py-2 text-[14px] mt-0.5 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                   value={sellerForm.quantity}
@@ -123,63 +124,63 @@ function OrderRequestCard({
             </div>
             {sellerForm.price && (
               <p className="text-[13px] text-[#374151]">
-                Tổng: {(Number(sellerForm.price) * Number(sellerForm.quantity)).toLocaleString()} ₫
+                Total: {(Number(sellerForm.price) * Number(sellerForm.quantity)).toLocaleString()} ₫
               </p>
             )}
             <button onClick={handleSellerSubmit} disabled={!sellerForm.price || submitting}
               className="w-full py-2 bg-[#2563EB] text-white rounded-xl text-[13px] font-semibold disabled:bg-[#93C5FD] flex items-center justify-center">
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Xác nhận giá'}
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Price'}
             </button>
           </>
         )}
 
-        {/* Seller đã fill, chờ buyer */}
+        {/* Seller filled, waiting for buyer */}
         {iAmSeller && status === 'seller_filled' && (
-          <p className="text-[13px] text-[#6B7280] text-center py-1">Đã xác nhận giá. Đang chờ người mua điền thông tin giao hàng…</p>
+          <p className="text-[13px] text-[#6B7280] text-center py-1">Price confirmed. Waiting for buyer to fill in delivery details…</p>
         )}
 
-        {/* ── BUYER fills delivery info (accepted hoặc seller đã fill rồi) ── */}
+        {/* ── BUYER fills delivery info (accepted or seller already filled) ── */}
         {!iAmSeller && (status === 'accepted' || status === 'seller_filled') && (
           <>
-            <p className="text-[13px] text-[#374151] font-medium">Điền thông tin giao hàng:</p>
+            <p className="text-[13px] text-[#374151] font-medium">Enter delivery information:</p>
             {orderRequest.price && (
               <p className="text-[13px] font-semibold text-[#2563EB]">
-                Giá: {Number(orderRequest.price).toLocaleString()} ₫ × {orderRequest.quantity ?? 1} = {(Number(orderRequest.price) * (orderRequest.quantity ?? 1)).toLocaleString()} ₫
+                Price: {Number(orderRequest.price).toLocaleString()} ₫ × {orderRequest.quantity ?? 1} = {(Number(orderRequest.price) * (orderRequest.quantity ?? 1)).toLocaleString()} ₫
               </p>
             )}
-            <input type="tel" placeholder="Số điện thoại *"
+            <input type="tel" placeholder="Phone number *"
               className="w-full border border-[#D1D5DB] rounded-xl px-3 py-2 text-[14px] focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               value={buyerForm.phone} onChange={e => setBuyerForm(f => ({ ...f, phone: e.target.value }))} />
             <input type="email" placeholder="Email *"
               className="w-full border border-[#D1D5DB] rounded-xl px-3 py-2 text-[14px] focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               value={buyerForm.email} onChange={e => setBuyerForm(f => ({ ...f, email: e.target.value }))} />
-            <input type="text" placeholder="Địa chỉ giao hàng *"
+            <input type="text" placeholder="Delivery address *"
               className="w-full border border-[#D1D5DB] rounded-xl px-3 py-2 text-[14px] focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               value={buyerForm.deliveryAddress} onChange={e => setBuyerForm(f => ({ ...f, deliveryAddress: e.target.value }))} />
             <select className="w-full border border-[#D1D5DB] rounded-xl px-3 py-2 text-[14px] bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               value={buyerForm.fulfillmentMethod} onChange={e => setBuyerForm(f => ({ ...f, fulfillmentMethod: e.target.value }))}>
-              <option value="delivery">Giao hàng</option>
-              <option value="pickup">Tự lấy</option>
-              <option value="flexible">Linh hoạt</option>
+              <option value="delivery">Delivery</option>
+              <option value="pickup">Pickup</option>
+              <option value="flexible">Flexible</option>
             </select>
             <button onClick={handleBuyerSubmit}
               disabled={!buyerForm.phone || !buyerForm.email || !buyerForm.deliveryAddress || submitting}
               className="w-full py-2 bg-[#2563EB] text-white rounded-xl text-[13px] font-semibold disabled:bg-[#93C5FD] flex items-center justify-center">
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Xác nhận thông tin giao hàng'}
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Delivery Info'}
             </button>
           </>
         )}
 
-        {/* Buyer đã fill, chờ seller */}
+        {/* Buyer filled, waiting for seller */}
         {!iAmSeller && status === 'buyer_filled' && (
-          <p className="text-[13px] text-[#6B7280] text-center py-1">Đã điền thông tin giao hàng. Đang chờ người bán xác nhận giá…</p>
+          <p className="text-[13px] text-[#6B7280] text-center py-1">Delivery info filled. Waiting for seller to confirm price…</p>
         )}
 
         {/* ── COMPLETED ────────────────────────────────────────────── */}
         {status === 'completed' && (
           <div className="flex items-center gap-2 text-[#16A34A]">
             <CheckCircle2 className="w-5 h-5" />
-            <p className="text-[13px] font-semibold">Đơn hàng đã được tạo thành công!</p>
+            <p className="text-[13px] font-semibold">Order created successfully!</p>
           </div>
         )}
       </div>

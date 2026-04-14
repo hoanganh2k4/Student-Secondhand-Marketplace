@@ -124,29 +124,29 @@ export default function ProfilePage() {
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-[#F3F4F6] rounded-xl p-3 text-center">
             <p className="text-[22px] font-bold text-[#111827]">{completedOrders.length}</p>
-            <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Đơn hoàn thành</p>
+            <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Completed Orders</p>
           </div>
           <div className="bg-[#F3F4F6] rounded-xl p-3 text-center">
             <p className="text-[22px] font-bold text-[#111827]">{activeListings.length}</p>
-            <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Listing đang bán</p>
+            <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Active Listings</p>
           </div>
           <div className="bg-[#F3F4F6] rounded-xl p-3 text-center">
             <p className="text-[22px] font-bold text-[#111827]">{activeDemands.length}</p>
-            <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Demand đang tìm</p>
+            <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Active Demands</p>
           </div>
         </div>
 
         {/* My Listings */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[15px] font-semibold text-[#111827]">Listings của tôi</h3>
-            <Link href="/listings" className="text-[#2563EB] text-[13px] font-medium">Xem tất cả</Link>
+            <h3 className="text-[15px] font-semibold text-[#111827]">My Listings</h3>
+            <Link href="/listings" className="text-[#2563EB] text-[13px] font-medium">View all</Link>
           </div>
 
           {recentListings.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[#D1D5DB] px-4 py-6 text-center">
               <Package className="w-8 h-8 text-[#D1D5DB] mx-auto mb-2" />
-              <p className="text-[13px] text-[#4B5563]">Chưa có listing nào</p>
+              <p className="text-[13px] text-[#4B5563]">No listings yet</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -184,14 +184,14 @@ export default function ProfilePage() {
         {/* My Demands */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[15px] font-semibold text-[#111827]">Demands của tôi</h3>
-            <Link href="/demands" className="text-[#2563EB] text-[13px] font-medium">Xem tất cả</Link>
+            <h3 className="text-[15px] font-semibold text-[#111827]">My Demands</h3>
+            <Link href="/demands" className="text-[#2563EB] text-[13px] font-medium">View all</Link>
           </div>
 
           {recentDemands.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[#D1D5DB] px-4 py-6 text-center">
               <Search className="w-8 h-8 text-[#D1D5DB] mx-auto mb-2" />
-              <p className="text-[13px] text-[#4B5563]">Chưa có demand nào</p>
+              <p className="text-[13px] text-[#4B5563]">No demands yet</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -227,8 +227,8 @@ export default function ProfilePage() {
         {orders.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[15px] font-semibold text-[#111827]">Đơn hàng gần đây</h3>
-              <Link href="/orders" className="text-[#2563EB] text-[13px] font-medium">Xem tất cả</Link>
+              <h3 className="text-[15px] font-semibold text-[#111827]">Recent Orders</h3>
+              <Link href="/orders" className="text-[#2563EB] text-[13px] font-medium">View all</Link>
             </div>
             <div className="space-y-2">
               {orders.slice(0, 3).map(o => (
@@ -263,7 +263,7 @@ export default function ProfilePage() {
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#DC2626]/20 bg-white px-4 py-3 text-[14px] font-medium text-[#DC2626] hover:bg-[#FEF2F2] transition-colors"
         >
           <LogOut className="w-4 h-4" />
-          Đăng xuất
+          Sign out
         </Link>
       </div>
     </div>

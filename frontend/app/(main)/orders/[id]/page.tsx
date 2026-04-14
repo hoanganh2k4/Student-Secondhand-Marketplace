@@ -182,8 +182,8 @@ export default function OrderDetailPage() {
               <CheckCircle className="w-7 h-7 text-white" />
             </div>
             <div>
-              <p className="text-[15px] font-semibold text-[#15803D]">Giao dịch thành công!</p>
-              <p className="text-[13px] text-[#166534] mt-0.5">Cả hai bên đã xác nhận. Cảm ơn bạn đã sử dụng marketplace.</p>
+              <p className="text-[15px] font-semibold text-[#15803D]">Transaction successful!</p>
+              <p className="text-[13px] text-[#166534] mt-0.5">Both parties have confirmed. Thank you for using the marketplace.</p>
             </div>
           </div>
         )}
@@ -217,17 +217,17 @@ export default function OrderDetailPage() {
         {/* Confirmation status */}
         {['created', 'in_progress'].includes(order.status) && (
           <div className="rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] p-4 space-y-2">
-            <p className="text-[13px] font-medium text-[#374151]">Xác nhận hoàn thành</p>
+            <p className="text-[13px] font-medium text-[#374151]">Completion Status</p>
             <div className="flex gap-4 text-[13px]">
               <span className={order.buyerConfirmedComplete ? 'text-[#16A34A] font-medium' : 'text-[#9CA3AF]'}>
-                {order.buyerConfirmedComplete ? '✓' : '○'} Người mua
+                {order.buyerConfirmedComplete ? '✓' : '○'} Buyer
               </span>
               <span className={order.sellerConfirmedComplete ? 'text-[#16A34A] font-medium' : 'text-[#9CA3AF]'}>
-                {order.sellerConfirmedComplete ? '✓' : '○'} Người bán
+                {order.sellerConfirmedComplete ? '✓' : '○'} Seller
               </span>
             </div>
             {iHaveConfirmed && (
-              <p className="text-[12px] text-[#16A34A]">Bạn đã xác nhận. Đang chờ phía còn lại xác nhận…</p>
+              <p className="text-[12px] text-[#16A34A]">You have confirmed. Waiting for the other party to confirm…</p>
             )}
           </div>
         )}
@@ -320,7 +320,7 @@ export default function OrderDetailPage() {
               className="w-full h-12 bg-[#2563EB] hover:bg-[#1d4ed8] disabled:bg-[#93C5FD] text-white rounded-xl text-[15px] font-semibold flex items-center justify-center gap-2"
             >
               <CheckCircle className="w-5 h-5" />
-              {confirming ? 'Đang xác nhận…' : 'Xác nhận hoàn thành'}
+              {confirming ? 'Confirming…' : 'Confirm Completion'}
             </button>
           )}
 

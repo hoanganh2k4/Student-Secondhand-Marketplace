@@ -349,7 +349,7 @@ export default function MatchDetailPage() {
         {canStillAct && iHaveAcknowledged && (
           <div className="w-full h-12 rounded-xl border border-[#D1D5DB] bg-[#F9FAFB] text-[#6B7280] text-[14px] flex items-center justify-center gap-2">
             <Clock className="w-4 h-4" />
-            Đã chấp nhận. Đang chờ bên kia…
+            Accepted. Waiting for the other party…
           </div>
         )}
 
@@ -360,14 +360,14 @@ export default function MatchDetailPage() {
               disabled={acting}
               className="flex-1 h-12 border border-[#DC2626] text-[#DC2626] rounded-xl text-[14px] font-medium hover:bg-[#FEF2F2] transition-colors flex items-center justify-center gap-2"
             >
-              <XCircle className="w-4 h-4" /> Từ chối
+              <XCircle className="w-4 h-4" /> Decline
             </button>
             <button
               onClick={() => act('acknowledge')}
               disabled={acting}
               className="flex-1 h-12 bg-[#2563EB] hover:bg-[#1d4ed8] disabled:bg-[#93C5FD] text-white rounded-xl text-[14px] font-semibold transition-colors flex items-center justify-center gap-2"
             >
-              {acting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><CheckCircle className="w-4 h-4" /> Chấp nhận</>}
+              {acting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><CheckCircle className="w-4 h-4" /> Accept</>}
             </button>
           </div>
         )}

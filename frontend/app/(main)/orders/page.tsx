@@ -100,7 +100,7 @@ export default function OrdersPage() {
             }`}
           >
             <ShoppingCart className="w-4 h-4" />
-            Đang mua
+            Buying
             {buyingOrders.length > 0 && (
               <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${tab === 'buying' ? 'bg-[#EFF6FF] text-[#2563EB]' : 'bg-[#F3F4F6] text-[#6B7280]'}`}>
                 {buyingOrders.length}
@@ -116,7 +116,7 @@ export default function OrdersPage() {
             }`}
           >
             <Package className="w-4 h-4" />
-            Đang bán
+            Selling
             {sellingOrders.length > 0 && (
               <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${tab === 'selling' ? 'bg-[#EFF6FF] text-[#2563EB]' : 'bg-[#F3F4F6] text-[#6B7280]'}`}>
                 {sellingOrders.length}
