@@ -64,6 +64,24 @@ export class AdminService {
 
   // ─── LISTINGS ─────────────────────────────────────────────────────────────
 
+  async listAllListings() {
+    return this.prisma.productListing.findMany({
+      select: {
+        id:               true,
+        title:            true,
+        status:           true,
+        priceExpectation: true,
+        createdAt:        true,
+        sellerProfile: {
+          select: {
+            user: { select: { name: true, email: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+
   async removeListing(listingId: string) {
     const listing = await this.prisma.productListing.findUnique({ where: { id: listingId } })
     if (!listing) throw new NotFoundException('Listing not found.')

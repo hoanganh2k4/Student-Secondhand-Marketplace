@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core'
 import { ValidationPipe } from '@nestjs/common'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { AppModule } from './app.module'
+import { PrismaService } from './prisma/prisma.service'
+import * as bcrypt from 'bcrypt'
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule)
@@ -84,6 +86,26 @@ async function bootstrap() {
   const port = process.env.PORT ?? 4000
   await app.listen(port)
   console.log(`Backend running at http://localhost:${port}/api`)
+
+  await seedAdmin(app.get(PrismaService))
+}
+
+async function seedAdmin(prisma: PrismaService) {
+  const ADMIN_EMAIL    = process.env.ADMIN_EMAIL    ?? 'admin@marketplace.com'
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'Admin@123456'
+
+  const existing = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } })
+
+  if (!existing) {
+    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12)
+    await prisma.user.create({
+      data: { email: ADMIN_EMAIL, emailVerified: true, name: 'System Admin', passwordHash, isAdmin: true },
+    })
+    console.log(`[seed] Admin account created: ${ADMIN_EMAIL}`)
+  } else if (!existing.isAdmin) {
+    await prisma.user.update({ where: { email: ADMIN_EMAIL }, data: { isAdmin: true } })
+    console.log(`[seed] Admin role granted to: ${ADMIN_EMAIL}`)
+  }
 }
 
 bootstrap()

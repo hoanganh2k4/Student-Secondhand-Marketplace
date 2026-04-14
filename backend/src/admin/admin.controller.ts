@@ -113,6 +113,21 @@ export class AdminController {
     return this.adminService.reinstateUser(id)
   }
 
+  @Get('listings')
+  @ApiOperation({ summary: 'List all listings', description: 'Admin only. Returns all listings with seller info.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Array of listings',
+    schema: {
+      example: [
+        { id: 'listing-uuid', title: 'MacBook Air M1', status: 'active', priceExpectation: '18000000', createdAt: '2026-04-01T08:00:00.000Z' },
+      ],
+    },
+  })
+  listListings() {
+    return this.adminService.listAllListings()
+  }
+
   @Patch('listings/:id/remove')
   @ApiOperation({ summary: 'Remove a listing (admin action)', description: 'Admin only. Sets listing status to removed.' })
   @ApiResponse({
