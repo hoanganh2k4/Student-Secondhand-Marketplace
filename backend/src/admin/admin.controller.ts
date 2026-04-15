@@ -1,5 +1,5 @@
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger'
-import { Controller, Get, Patch, Param, Body, Query, UseGuards, Request } from '@nestjs/common'
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery, ApiParam } from '@nestjs/swagger'
+import { Controller, Get, Patch, Param, Body, Query, UseGuards, Request, DefaultValuePipe, ParseIntPipe } from '@nestjs/common'
 import { JwtAuthGuard }  from '../auth/guards/jwt-auth.guard'
 import { AdminGuard }    from './admin.guard'
 import { AdminService }  from './admin.service'
@@ -113,19 +113,36 @@ export class AdminController {
     return this.adminService.reinstateUser(id)
   }
 
+  // ─── LISTINGS ─────────────────────────────────────────────────────────────
+
   @Get('listings')
-  @ApiOperation({ summary: 'List all listings', description: 'Admin only. Returns all listings with seller info.' })
-  @ApiResponse({
-    status: 200,
-    description: 'Array of listings',
-    schema: {
-      example: [
-        { id: 'listing-uuid', title: 'MacBook Air M1', status: 'active', priceExpectation: '18000000', createdAt: '2026-04-01T08:00:00.000Z' },
-      ],
-    },
-  })
-  listListings() {
-    return this.adminService.listAllListings()
+  @ApiOperation({ summary: 'List all listings', description: 'Admin only. Returns all listings with filtering and pagination.' })
+  @ApiQuery({ name: 'status', required: false, description: 'draft | active | matched | in_conversation | partially_sold | sold | expired | removed' })
+  @ApiQuery({ name: 'categoryId', required: false })
+  @ApiQuery({ name: 'condition', required: false, description: 'poor | fair | good | very_good | like_new' })
+  @ApiQuery({ name: 'search', required: false, description: 'Title or seller email' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'priceExpectation', 'proofCompletenessScore'] })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
+  listListings(
+    @Query('status') status?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('condition') condition?: string,
+    @Query('search') search?: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number = 0,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
+  ) {
+    return this.adminService.listListings({ status, categoryId, condition, search, limit, offset, sortBy, sortOrder });
+  }
+
+  @Get('listings/:id')
+  @ApiOperation({ summary: 'Get listing details', description: 'Admin only. Returns listing details including proof assets and matches.' })
+  @ApiParam({ name: 'id', description: 'Listing ID' })
+  getListing(@Param('id') id: string) {
+    return this.adminService.getListing(id);
   }
 
   @Patch('listings/:id/remove')
@@ -137,6 +154,100 @@ export class AdminController {
   })
   @ApiResponse({ status: 404, description: 'Listing not found' })
   removeListing(@Param('id') id: string) {
-    return this.adminService.removeListing(id)
+    return this.adminService.removeListing(id);
+  }
+
+  // ─── DEMANDS ──────────────────────────────────────────────────────────────
+
+  @Get('demands')
+  @ApiOperation({ summary: 'List all demands', description: 'Admin only. Returns all demands with filtering and pagination.' })
+  @ApiQuery({ name: 'status', required: false, description: 'draft | active | waiting | matched | in_conversation | in_negotiation | fulfilled | expired | cancelled' })
+  @ApiQuery({ name: 'categoryId', required: false })
+  @ApiQuery({ name: 'search', required: false, description: 'Title or buyer email' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'expiresAt'] })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
+listDemands(
+    @Query('status') status?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('search') search?: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number = 0,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
+  ) {
+    return this.adminService.listDemands({ status, categoryId, search, limit, offset, sortBy, sortOrder })
+  }
+
+  @Get('demands/:id')
+  @ApiOperation({ summary: 'Get demand details', description: 'Admin only. Returns demand details including buyer info and AI matches.' })
+  @ApiParam({ name: 'id', description: 'Demand ID' })
+  getDemand(@Param('id') id: string) {
+    return this.adminService.getDemand(id)
+  }
+
+  // ─── ORDERS ───────────────────────────────────────────────────────────────
+
+  @Get('orders')
+  @ApiOperation({ summary: 'List all orders', description: 'Admin only. Returns all orders with filtering and pagination.' })
+  @ApiQuery({ name: 'status', required: false, description: 'created | confirmed | in_progress | completed | cancelled | disputed' })
+  @ApiQuery({ name: 'fulfillmentMethod', required: false, description: 'pickup | delivery | flexible' })
+  @ApiQuery({ name: 'search', required: false, description: 'Email buyer/seller or listing title' })
+  @ApiQuery({ name: 'fromDate', required: false, description: 'ISO Date string (e.g. 2026-04-01T00:00:00.000Z)' })
+  @ApiQuery({ name: 'toDate', required: false, description: 'ISO Date string (e.g. 2026-04-30T23:59:59.999Z)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'finalPrice', 'completedAt'] })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
+  listOrders(
+    @Query('status') status?: string,
+    @Query('fulfillmentMethod') fulfillmentMethod?: string,
+    @Query('search') search?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number = 0,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
+  ) {
+    return this.adminService.listOrders({ 
+      status, 
+      fulfillmentMethod, 
+      search, 
+      fromDate, 
+      toDate, 
+      limit, 
+      offset, 
+      sortBy, 
+      sortOrder 
+    });
+  }
+
+  @Get('orders/:id')
+  @ApiOperation({ summary: 'Get order details', description: 'Admin only. Returns order details including match, offer, dispute, and reviews.' })
+  @ApiParam({ name: 'id', description: 'Order ID' })
+  getOrder(@Param('id') id: string) {
+    return this.adminService.getOrder(id);
+  }
+
+  // ─── STATS ────────────────────────────────────────────────────────────────
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get marketplace statistics', description: 'Admin only. Returns overall stats for demands, listings, orders, and matches.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Marketplace statistics',
+    schema: {
+      example: {
+        demands: { total: 142, active: 38, fulfilled: 12, expiringSoon: 7 },
+        listings: { total: 87, active: 45, removed: 3, lowProofScore: 9 },
+        orders: { total: 34, completed: 22, disputed: 2, inProgress: 4, totalVolume: 42500000 },
+        matches: { total: 156, conversionRate: 0.22 }
+      }
+    }
+  })
+  getStats() {
+    return this.adminService.getStats();
   }
 }
