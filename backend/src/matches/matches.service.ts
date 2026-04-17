@@ -216,30 +216,32 @@ export class MatchesService {
   private async openConversation(match: any, fullMatch: any) {
     const autoCloseAt = new Date()
     autoCloseAt.setDate(autoCloseAt.getDate() + 14)
+    const buyerUserId  = fullMatch.demandRequest.buyerProfile.userId
+    const sellerUserId = fullMatch.productListing.sellerProfile.userId
 
+    // Single nested create: conversation + system message in one DB transaction.
+    // No window exists between conversation creation and message insertion,
+    // so no user message can ever precede the system message.
     const conversation = await this.prisma.conversation.create({
       data: {
-        matchId:      match.id,
-        buyerUserId:  fullMatch.demandRequest.buyerProfile.userId,
-        sellerUserId: fullMatch.productListing.sellerProfile.userId,
+        matchId:     match.id,
+        buyerUserId,
+        sellerUserId,
         autoCloseAt,
+        messages: {
+          create: {
+            senderUserId:      buyerUserId,
+            messageType:       'system',
+            body:              'Conversation opened. Start with the Verification stage.',
+            isSystemGenerated: true,
+          },
+        },
       },
     })
 
     await this.prisma.match.update({
       where: { id: match.id },
       data:  { status: 'active' },
-    })
-
-    // System message
-    await this.prisma.message.create({
-      data: {
-        conversationId:    conversation.id,
-        senderUserId:      fullMatch.demandRequest.buyerProfile.userId,
-        messageType:       'system',
-        body:              'Conversation opened. Start with the Verification stage.',
-        isSystemGenerated: true,
-      },
     })
 
     await this.notifications.notify(

@@ -38,8 +38,8 @@ function OrderRequestCard({
   iAmSeller: boolean
   onAccept: () => void
   onReject: () => void
-  onSellerFill: (f: SellerForm) => void
-  onBuyerFill:  (f: BuyerForm)  => void
+  onSellerFill: (f: SellerForm) => Promise<void>
+  onBuyerFill:  (f: BuyerForm)  => Promise<void>
 }
 ) {
   const iAmInitiator = myUserId === orderRequest.initiatedByUserId
@@ -48,21 +48,26 @@ function OrderRequestCard({
     phone: '', email: '', deliveryAddress: '', fulfillmentMethod: 'delivery',
   })
   const [submitting, setSubmitting] = useState(false)
+  const [formError,  setFormError]  = useState<string | null>(null)
 
   const status = orderRequest.status as string
 
   async function handleSellerSubmit() {
     if (!sellerForm.price || submitting) return
+    setFormError(null)
     setSubmitting(true)
-    await onSellerFill(sellerForm)
-    setSubmitting(false)
+    try { await onSellerFill(sellerForm) }
+    catch (e: any) { setFormError(e?.message ?? 'Something went wrong.') }
+    finally { setSubmitting(false) }
   }
 
   async function handleBuyerSubmit() {
     if (!buyerForm.phone || !buyerForm.email || !buyerForm.deliveryAddress || submitting) return
+    setFormError(null)
     setSubmitting(true)
-    await onBuyerFill(buyerForm)
-    setSubmitting(false)
+    try { await onBuyerFill(buyerForm) }
+    catch (e: any) { setFormError(e?.message ?? 'Something went wrong.') }
+    finally { setSubmitting(false) }
   }
 
   return (
@@ -127,6 +132,7 @@ function OrderRequestCard({
                 Total: {(Number(sellerForm.price) * Number(sellerForm.quantity)).toLocaleString()} ₫
               </p>
             )}
+            {formError && <p className="text-[12px] text-[#DC2626]">{formError}</p>}
             <button onClick={handleSellerSubmit} disabled={!sellerForm.price || submitting}
               className="w-full py-2 bg-[#2563EB] text-white rounded-xl text-[13px] font-semibold disabled:bg-[#93C5FD] flex items-center justify-center">
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Price'}
@@ -163,6 +169,7 @@ function OrderRequestCard({
               <option value="pickup">Pickup</option>
               <option value="flexible">Flexible</option>
             </select>
+            {formError && <p className="text-[12px] text-[#DC2626]">{formError}</p>}
             <button onClick={handleBuyerSubmit}
               disabled={!buyerForm.phone || !buyerForm.email || !buyerForm.deliveryAddress || submitting}
               className="w-full py-2 bg-[#2563EB] text-white rounded-xl text-[13px] font-semibold disabled:bg-[#93C5FD] flex items-center justify-center">
@@ -210,7 +217,16 @@ export default function ConversationThreadPage() {
       fetch(`/api/proxy/conversations/${id}`),
       fetch('/api/proxy/auth/me'),
     ])
-    if (convRes.ok) setConv(await convRes.json())
+    if (convRes.ok) {
+      const fresh = await convRes.json()
+      // Merge: keep any WS-pushed messages not yet in the HTTP response
+      setConv((prev: any) => {
+        if (!prev) return fresh
+        const freshIds = new Set((fresh.messages ?? []).map((m: any) => m.id))
+        const extra = (prev.messages ?? []).filter((m: any) => !freshIds.has(m.id))
+        return { ...fresh, messages: [...(fresh.messages ?? []), ...extra] }
+      })
+    }
     if (meRes.ok) { const me = await meRes.json(); setMyId(me.id) }
     setLoading(false)
   }, [id])
@@ -221,9 +237,13 @@ export default function ConversationThreadPage() {
   // ── Realtime WebSocket ───────────────────────────────────────────────────
   useConversationSocket(id ?? null, {
     new_message: (msg) => {
-      setConv((prev: any) => prev
-        ? { ...prev, messages: [...(prev.messages ?? []), msg] }
-        : prev)
+      setConv((prev: any) => {
+        if (!prev) return prev
+        // Deduplicate: skip if this message id already exists
+        const exists = (prev.messages ?? []).some((m: any) => m.id === msg.id)
+        if (exists) return prev
+        return { ...prev, messages: [...(prev.messages ?? []), msg] }
+      })
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     },
     order_request_created: () => load(),   // reload full conv to get orderRequests
@@ -288,14 +308,19 @@ export default function ConversationThreadPage() {
   }
 
   async function sellerFillInfo(requestId: string, form: SellerForm) {
-    await fetch(`/api/proxy/conversations/order-requests/${requestId}/seller-info`, {
+    const res = await fetch(`/api/proxy/conversations/order-requests/${requestId}/seller-info`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ price: Number(form.price), quantity: Number(form.quantity) }),
     })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      const msg = Array.isArray(err.message) ? err.message.join(', ') : (err.message ?? 'Request failed.')
+      throw new Error(msg)
+    }
   }
 
   async function buyerFillInfo(requestId: string, form: BuyerForm) {
-    await fetch(`/api/proxy/conversations/order-requests/${requestId}/buyer-info`, {
+    const res = await fetch(`/api/proxy/conversations/order-requests/${requestId}/buyer-info`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phone: form.phone, email: form.email,
@@ -303,6 +328,11 @@ export default function ConversationThreadPage() {
         fulfillmentMethod: form.fulfillmentMethod,
       }),
     })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      const msg = Array.isArray(err.message) ? err.message.join(', ') : (err.message ?? 'Request failed.')
+      throw new Error(msg)
+    }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -330,8 +360,16 @@ export default function ConversationThreadPage() {
     (or: any) => !['rejected', 'completed'].includes(or.status)
   )
 
-  // Build a merged timeline: messages + order_request system messages resolved
-  const messages: any[] = conv.messages ?? []
+  // Deduplicate by id (guard against HTTP reload + WS overlap),
+  // then sort ascending by createdAt (NaN-safe fallback to 0).
+  const seen = new Set<string>()
+  const messages: any[] = (conv.messages ?? [])
+    .filter((m: any) => { if (seen.has(m.id)) return false; seen.add(m.id); return true })
+    .sort((a: any, b: any) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      return ta - tb
+    })
 
   return (
     <div className="flex flex-col min-h-screen bg-white">
