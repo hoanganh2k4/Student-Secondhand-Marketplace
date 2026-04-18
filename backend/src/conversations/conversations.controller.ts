@@ -104,6 +104,14 @@ export class ConversationsController {
     return this.conversationsService.sendMessage(req.user.id, id, dto)
   }
 
+  @Post(':id/abandon')
+  @ApiOperation({ summary: 'Abandon conversation', description: 'Either party can walk away. Closes the conversation with closeReason=abandoned, marks match as closed_failed, logs dismissed interaction for LTR training.' })
+  @ApiResponse({ status: 201, description: 'Conversation abandoned', schema: { example: { conversationId: 'conv-uuid', status: 'closed', closeReason: 'abandoned' } } })
+  @ApiResponse({ status: 422, description: 'Cannot abandon — active order exists' })
+  abandon(@Request() req: any, @Param('id') id: string) {
+    return this.conversationsService.abandon(req.user.id, id)
+  }
+
   @Post(':id/advance-stage')
   @ApiOperation({ summary: 'Advance conversation stage', description: 'verification → clarification → negotiation → closed. Only buyer can advance.' })
   @ApiResponse({

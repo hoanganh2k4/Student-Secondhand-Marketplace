@@ -111,10 +111,34 @@ export class OrdersService {
       throw new UnprocessableEntityException(`Cannot cancel order with status '${order.status}'.`)
     }
 
-    const updated = await this.prisma.order.update({
-      where: { id: orderId },
-      data:  { status: 'cancelled', cancelledAt: new Date(), cancellationReason: dto.reason },
+    // Load match + snapshot for interaction logging
+    const match = await this.prisma.match.findUnique({
+      where:   { id: order.matchId },
+      include: { snapshot: true },
     })
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.order.update({
+        where: { id: orderId },
+        data:  { status: 'cancelled', cancelledAt: new Date(), cancellationReason: dto.reason },
+      }),
+      // Mark the match as failed
+      this.prisma.match.update({
+        where: { id: order.matchId },
+        data:  { status: 'closed_failed' },
+      }),
+      // Log dismissed interaction for LTR training
+      this.prisma.matchInteraction.create({
+        data: {
+          matchId:   order.matchId,
+          snapshotId: match?.snapshot?.id ?? null,
+          userId,
+          action:    'dismissed',
+          surface:   'order',
+          metadata:  { trigger: 'order_cancelled', reason: dto.reason },
+        },
+      }),
+    ])
 
     this.gateway.emit(orderId, 'order_updated', updated)
 
@@ -208,6 +232,30 @@ export class OrdersService {
   private async onOrderCompleted(order: any) {
     await this.notifications.notify(order.buyerUserId,  'order_completed', 'Order completed. Please leave a review!', 'order', order.id)
     await this.notifications.notify(order.sellerUserId, 'order_completed', 'Order completed. Please leave a review!', 'order', order.id)
+
+    // Increment order counters on buyer/seller profiles
+    await this.prisma.buyerProfile.updateMany({
+      where:  { userId: order.buyerUserId },
+      data:   { totalOrdersCompleted: { increment: 1 } },
+    })
+    await this.prisma.sellerProfile.updateMany({
+      where:  { userId: order.sellerUserId },
+      data:   { totalOrdersCompleted: { increment: 1 } },
+    })
+
+    // Update fulfilled quantity on the related demand
+    const match = await this.prisma.match.findUnique({ where: { id: order.matchId } })
+    if (match) {
+      await this.prisma.demandRequest.update({
+        where: { id: match.demandRequestId },
+        data:  { fulfilledQuantity: { increment: order.quantity } },
+      })
+      // Reduce listing's remaining quantity
+      await this.prisma.productListing.update({
+        where: { id: match.productListingId },
+        data:  { quantityRemaining: { decrement: order.quantity } },
+      })
+    }
   }
 
   private async updateProfileRating(userId: string, role: 'buyer' | 'seller') {

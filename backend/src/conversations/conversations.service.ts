@@ -383,6 +383,73 @@ export class ConversationsService {
     }
   }
 
+  // ─── ABANDON ──────────────────────────────────────────────────────────────
+
+  async abandon(userId: string, conversationId: string) {
+    const conv = await this.getActiveConv(userId, conversationId)
+
+    // Check no completed/active order exists for this match
+    const activeOrder = await this.prisma.order.findFirst({
+      where: {
+        matchId: conv.matchId,
+        status:  { notIn: ['cancelled'] },
+      },
+    })
+    if (activeOrder) {
+      throw new UnprocessableEntityException('Cannot abandon a conversation with an active or completed order.')
+    }
+
+    const match = conv.matchId
+      ? await this.prisma.match.findUnique({ where: { id: conv.matchId }, include: { snapshot: true } })
+      : null
+
+    await this.prisma.$transaction(async (tx) => {
+      // Close the conversation
+      await tx.conversation.update({
+        where: { id: conversationId },
+        data:  { status: 'closed', stage: 'closed', closeReason: 'abandoned' },
+      })
+
+      // System message
+      await tx.message.create({
+        data: {
+          conversationId,
+          senderUserId:      userId,
+          messageType:       'system',
+          body:              'The conversation was ended. Match has been marked as failed.',
+          isSystemGenerated: true,
+        },
+      })
+
+      if (match) {
+        // Mark match as failed
+        await tx.match.update({
+          where: { id: match.id },
+          data:  { status: 'closed_failed' },
+        })
+
+        // Log dismissed interaction for LTR training
+        await tx.matchInteraction.create({
+          data: {
+            matchId:   match.id,
+            snapshotId: match.snapshot?.id ?? null,
+            userId,
+            action:    'dismissed',
+            surface:   'conversation',
+            metadata:  { trigger: 'conversation_abandoned' },
+          },
+        })
+      }
+    })
+
+    const otherId = conv.buyerUserId === userId ? conv.sellerUserId : conv.buyerUserId
+    await this.notifications.notify(otherId, 'conversation_abandoned', 'The other party ended the conversation.', 'conversation', conversationId)
+
+    this.gateway.emit(conversationId, 'conversation_abandoned', { conversationId })
+
+    return { conversationId, status: 'closed', closeReason: 'abandoned' }
+  }
+
   // ─── EVIDENCE REQUESTS ────────────────────────────────────────────────────
 
   async createEvidenceRequest(userId: string, conversationId: string, dto: CreateEvidenceRequestDto) {

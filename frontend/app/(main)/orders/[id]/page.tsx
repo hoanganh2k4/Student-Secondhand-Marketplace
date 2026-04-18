@@ -324,7 +324,8 @@ export default function OrderDetailPage() {
             </button>
           )}
 
-          {order.status === 'completed' && !showReview && order.ratingReviews?.length === 0 && (
+          {order.status === 'completed' && !showReview &&
+            !order.ratingReviews?.some((r: any) => r.reviewerUserId === myId) && (
             <button
               onClick={() => setShowReview(true)}
               className="w-full h-12 border border-[#F59E0B] text-[#D97706] hover:bg-[#FFFBEB] rounded-xl text-[15px] font-medium flex items-center justify-center gap-2"

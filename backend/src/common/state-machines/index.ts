@@ -56,9 +56,9 @@ export function transitionListing(from: ListingStatus, to: ListingStatus): Listi
 // ─── MATCH ────────────────────────────────────────────────────────────────────
 
 const MATCH_TRANSITIONS: Record<MatchStatus, MatchStatus[]> = {
-  proposed:         ['buyer_confirmed', 'seller_confirmed', 'active', 'expired'],
-  buyer_confirmed:  ['active', 'expired'],
-  seller_confirmed: ['active', 'expired'],
+  proposed:         ['buyer_confirmed', 'seller_confirmed', 'active', 'closed_failed', 'expired'],
+  buyer_confirmed:  ['active', 'closed_failed', 'expired'],
+  seller_confirmed: ['active', 'closed_failed', 'expired'],
   active:           ['closed_success', 'closed_failed', 'expired'],
   closed_success:   [],
   closed_failed:    [],

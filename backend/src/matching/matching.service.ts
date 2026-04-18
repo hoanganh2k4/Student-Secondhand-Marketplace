@@ -37,9 +37,10 @@ export class MatchingService {
 
     const listings = await this.prisma.productListing.findMany({
       where: {
-        status:        'active',
-        categoryId:    demand.categoryId,
-        sellerProfile: { userId: { not: demand.buyerProfile.userId } },
+        status:             'active',
+        quantityRemaining:  { gt: 0 },
+        category:           { name: demand.category.name },
+        sellerProfile:      { userId: { not: demand.buyerProfile.userId } },
       },
       include: { sellerProfile: true, proofAssets: true, category: true },
     })
@@ -139,14 +140,16 @@ export class MatchingService {
     })
     if (!listing || listing.status !== 'active') return
 
-    const demands = await this.prisma.demandRequest.findMany({
+    const allDemands = await this.prisma.demandRequest.findMany({
       where: {
         status:       { in: ['active', 'waiting'] },
-        categoryId:   listing.categoryId,
+        category:     { name: listing.category.name },
         buyerProfile: { userId: { not: listing.sellerProfile.userId } },
       },
       include: { buyerProfile: true, category: true },
     })
+    // Exclude demands that have already been fully fulfilled
+    const demands = allDemands.filter(d => d.fulfilledQuantity < d.quantityNeeded)
     if (demands.length === 0) return
 
     const queryText  = this.buildListingText(listing as any)

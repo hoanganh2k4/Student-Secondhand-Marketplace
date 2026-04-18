@@ -175,6 +175,7 @@ export class MatchesService {
       include: {
         demandRequest:  { include: { buyerProfile: true } },
         productListing: { include: { sellerProfile: true } },
+        snapshot:       true,
       },
     })
     if (!match) throw new NotFoundException('Match not found.')
@@ -185,7 +186,28 @@ export class MatchesService {
     }
 
     const nextStatus = transitionMatch(match.status, 'closed_failed')
-    return this.prisma.match.update({ where: { id: matchId }, data: { status: nextStatus } })
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.match.update({ where: { id: matchId }, data: { status: nextStatus } }),
+      this.prisma.matchInteraction.create({
+        data: {
+          matchId,
+          snapshotId: match.snapshot?.id ?? null,
+          userId,
+          action:     'dismissed',
+          surface:    'match_detail',
+          metadata:   { trigger: 'explicit_decline' },
+        },
+      }),
+    ])
+
+    // Notify the other party
+    const otherId = match.demandRequest.buyerProfile.userId === userId
+      ? match.productListing.sellerProfile.userId
+      : match.demandRequest.buyerProfile.userId
+    await this.notifications.notify(otherId, 'match_declined', 'The other party declined the match.', 'match', matchId)
+
+    return updated
   }
 
   // ─── PRIVATE HELPERS ───────────────────────────────────────────────────────
