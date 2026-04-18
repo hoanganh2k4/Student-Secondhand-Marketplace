@@ -1,6 +1,7 @@
 import { ApiTags, ApiBearerAuth, ApiQuery, ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger'
 import { Controller, Get, Post, Body, Query, Param, UseGuards, DefaultValuePipe, ParseIntPipe } from '@nestjs/common'
 import { JwtAuthGuard }  from '../auth/guards/jwt-auth.guard'
+import { AdminGuard }    from '../admin/admin.guard'
 import { AiService }     from './ai.service'
 import { PrismaService } from '../prisma/prisma.service'
 
@@ -241,9 +242,10 @@ export class AiController {
     return this.ai.visionListingContext(image_urls)
   }
 
-  // ── Match Logs ───────────────────────────────────────────────────────────────
+  // ── Match Logs (admin only) ──────────────────────────────────────────────────
 
   @Get('match-logs')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'List AI match run logs', description: 'Each row = one matching engine run: source demand/listing, how many candidates were scored, how many matches were created.' })
   @ApiQuery({ name: 'limit',       required: false, example: 20 })
   @ApiQuery({ name: 'offset',      required: false, example: 0 })
@@ -272,15 +274,17 @@ export class AiController {
   }
 
   @Get('match-logs/:id')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Get a single match log with full AI results array' })
   @ApiResponse({ status: 200, description: 'AiMatchLog with sourceText, results array, and match count' })
   matchLog(@Param('id') id: string) {
     return this.prisma.aiMatchLog.findUniqueOrThrow({ where: { id } })
   }
 
-  // ── Training Data ────────────────────────────────────────────────────────────
+  // ── Training Data (admin only) ───────────────────────────────────────────────
 
   @Get('training-data')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Export LTR training data (paginated)', description: 'Each row = one MatchSnapshot joined with its aggregated interaction label. label=null means no interactions yet.' })
   @ApiQuery({ name: 'limit',    required: false, example: 50 })
   @ApiQuery({ name: 'offset',   required: false, example: 0 })
@@ -348,6 +352,7 @@ export class AiController {
   }
 
   @Get('training-data/export')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Export training data as JSONL for XGBoost LambdaRank', description: 'Each row has qid (demandId for grouping), label (0–1), features (flat array), featureNames. Feed directly to train_ltr.py.' })
   @ApiQuery({ name: 'minLabel', required: false, example: 0, description: 'Minimum label threshold (0–1). Use 0.5 to export only positive examples.' })
   @ApiResponse({ status: 200, description: '{ count, rows: [{ qid, label, features, featureNames, snapshotId }] }' })
@@ -412,6 +417,7 @@ export class AiController {
   }
 
   @Get('training-data/stats')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Training data coverage stats', description: 'Shows label distribution, how many snapshots have interactions, and breakdown by action type and model version.' })
   @ApiResponse({ status: 200, description: '{ totalSnapshots, totalInteractions, coverageRate, byAction, byModelVersion }' })
   async trainingDataStats() {
@@ -442,9 +448,10 @@ export class AiController {
     }
   }
 
-  // ── Call Logs ─────────────────────────────────────────────────────────────────
+  // ── Call Logs (admin only) ────────────────────────────────────────────────────
 
   @Get('call-logs')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'List AI service call logs', description: 'Every call from the backend to the FastAPI AI service is logged. Shows endpoint, latency, and error (if any). inputData/outputData only available in the detail endpoint.' })
   @ApiQuery({ name: 'limit',  required: false, example: 20 })
   @ApiQuery({ name: 'offset', required: false, example: 0 })
@@ -483,6 +490,7 @@ export class AiController {
   }
 
   @Get('call-logs/:id')
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Get full call log with inputData and outputData' })
   @ApiResponse({ status: 200, description: 'AiCallLog with full inputData and outputData' })
   callLog(@Param('id') id: string) {
