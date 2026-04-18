@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Bell, Plus, Loader2, RefreshCw, Target, ImageIcon } from 'lucide-react'
 import { useUnreadCount } from '@/hooks/useUnreadCount'
@@ -26,6 +27,7 @@ const LISTING_STATUS_COLOR: Record<string, string> = {
 }
 
 export default function HomePage() {
+  const router      = useRouter()
   const unreadCount = useUnreadCount()
   const [user,      setUser]      = useState<any>(null)
   const [demands,   setDemands]   = useState<any[]>([])
@@ -41,14 +43,18 @@ export default function HomePage() {
         fetch('/api/proxy/demands'),
         fetch('/api/proxy/listings'),
       ])
-      if (userRes.ok)     setUser(await userRes.json())
+      if (userRes.ok) {
+        const u = await userRes.json()
+        if (u?.isAdmin) { router.replace('/admin'); return }
+        setUser(u)
+      }
       if (demandsRes.ok)  setDemands(await demandsRes.json())
       if (listingsRes.ok) setListings(await listingsRes.json())
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [router])
 
   useEffect(() => {
     fetchAll()
