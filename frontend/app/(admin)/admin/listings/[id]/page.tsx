@@ -49,9 +49,11 @@ interface ListingDetail {
   };
   sellerProfile: {
     id: string;
+    userId: string;
     name: string;
     email: string;
     sellerRating: number;
+    buyerRating: number | null;
     totalOrdersCompleted: number;
     trustTier: string;
   };
@@ -438,7 +440,7 @@ export default function AdminListingDetailPage() {
                   </div>
                   <div className="ml-3">
                     <Link
-                      href={`/admin/users/${listing.sellerProfile.id}`}
+                      href={`/admin/users/${listing.sellerProfile.userId}`}
                       className="text-sm font-medium text-blue-600 hover:text-blue-800"
                     >
                       {listing.sellerProfile.name}
@@ -460,6 +462,15 @@ export default function AdminListingDetailPage() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Buyer Rating</span>
+                    <div className="flex items-center">
+                      <Star className="w-4 h-4 text-yellow-400 mr-1" />
+                      <span className="text-sm font-medium">
+                        {listing.sellerProfile.buyerRating ?? 0}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">
                       Orders Completed
                     </span>
@@ -475,6 +486,14 @@ export default function AdminListingDetailPage() {
                       {listing.sellerProfile.trustTier}
                     </span>
                   </div>
+                </div>
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <Link
+                    href={`/admin/users/${listing.sellerProfile.userId}`}
+                    className="block w-full text-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+                  >
+                    View Full Profile
+                  </Link>
                 </div>
               </div>
             </div>

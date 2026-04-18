@@ -12,16 +12,13 @@ import {
   Clock,
   AlertCircle,
   User,
-  Mail,
-  Building,
   Star,
+  Building,
   ShoppingBag,
   TrendingUp,
   FileText,
   Tag,
   Heart,
-  CheckCircle,
-  XCircle,
 } from "lucide-react";
 import DemandStatusBadge from "../_components/demand-status-badge";
 import Toast from "@/components/ui/toast";
@@ -48,9 +45,12 @@ interface DemandDetail {
   };
   buyerProfile: {
     id: string;
+    userId: string;
     name: string;
     email: string;
     trustTier: string;
+    buyerRating: number;
+    sellerRating: number | null;
     totalOrdersCompleted: number;
     university?: string;
     avatar?: string;
@@ -147,17 +147,6 @@ export default function AdminDemandDetailPage() {
         return "bg-blue-100 text-blue-800";
       default:
         return "bg-gray-100 text-gray-800";
-    }
-  };
-
-  const getTrustTierIcon = (tier: string) => {
-    switch (tier) {
-      case "established":
-        return <CheckCircle className="w-4 h-4" />;
-      case "verified":
-        return <Star className="w-4 h-4" />;
-      default:
-        return <User className="w-4 h-4" />;
     }
   };
 
@@ -491,7 +480,8 @@ export default function AdminDemandDetailPage() {
           {/* Right column - Buyer info */}
           <div className="space-y-6">
             {/* Buyer Profile Card */}
-            <div className="bg-white rounded-lg shadow sticky top-6">
+            {/* Buyer Info Card */}
+            <div className="bg-white rounded-lg shadow">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900 flex items-center">
                   <User className="w-5 h-5 mr-2" />
@@ -500,91 +490,84 @@ export default function AdminDemandDetailPage() {
               </div>
               <div className="p-6">
                 <div className="flex items-center mb-4">
-                  <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold">
+                  <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold">
                     {demand.buyerProfile.name.charAt(0).toUpperCase()}
                   </div>
-                  <div className="ml-4 flex-1">
+                  <div className="ml-3">
                     <Link
-                      href={`/admin/users/${demand.buyerProfile.id}`}
-                      className="text-base font-semibold text-blue-600 hover:text-blue-800"
+                      href={`/admin/users/${demand.buyerProfile.userId}`}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-800"
                     >
                       {demand.buyerProfile.name}
                     </Link>
-                    <div className="flex items-center text-sm text-gray-500 mt-1">
-                      <Mail className="w-3 h-3 mr-1" />
+                    <div className="text-sm text-gray-500">
                       {demand.buyerProfile.email}
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4 pt-4 border-t border-gray-100">
+                <div className="space-y-3">
                   {demand.buyerProfile.university && (
-                    <div className="flex items-start">
-                      <Building className="w-4 h-4 text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
-                      <div>
-                        <p className="text-xs text-gray-500">University</p>
-                        <p className="text-sm text-gray-900">
-                          {demand.buyerProfile.university}
-                        </p>
-                      </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600 flex items-center gap-1">
+                        <Building className="w-3.5 h-3.5" /> University
+                      </span>
+                      <span className="text-sm font-medium text-right max-w-[60%] truncate">
+                        {demand.buyerProfile.university}
+                      </span>
                     </div>
                   )}
-
-                  <div className="flex items-start">
-                    <div className="flex items-center gap-2">
-                      {getTrustTierIcon(demand.buyerProfile.trustTier)}
-                      <div>
-                        <p className="text-xs text-gray-500">Trust Tier</p>
-                        <p
-                          className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${getTrustTierColor(demand.buyerProfile.trustTier)}`}
-                        >
-                          {demand.buyerProfile.trustTier
-                            .charAt(0)
-                            .toUpperCase() +
-                            demand.buyerProfile.trustTier.slice(1)}
-                        </p>
-                      </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Buyer Rating</span>
+                    <div className="flex items-center">
+                      <Star className="w-4 h-4 text-yellow-400 mr-1" />
+                      <span className="text-sm font-medium">
+                        {demand.buyerProfile.buyerRating || 0}
+                      </span>
                     </div>
                   </div>
-
-                  <div className="flex items-start">
-                    <ShoppingBag className="w-4 h-4 text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs text-gray-500">Orders Completed</p>
-                      <p className="text-sm text-gray-900">
-                        {demand.buyerProfile.totalOrdersCompleted}
-                      </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Seller Rating</span>
+                    <div className="flex items-center">
+                      <Star className="w-4 h-4 text-yellow-400 mr-1" />
+                      <span className="text-sm font-medium">
+                        {demand.buyerProfile.sellerRating ?? 0}
+                      </span>
                     </div>
                   </div>
-
-                  <div className="flex items-start">
-                    <Target className="w-4 h-4 text-gray-400 mt-0.5 mr-2 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs text-gray-500">
-                        Fulfillment Progress
-                      </p>
-                      <div className="mt-1">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 bg-gray-200 rounded-full h-2 min-w-[100px]">
-                            <div
-                              className="bg-green-500 h-2 rounded-full transition-all"
-                              style={{
-                                width: `${(demand.fulfilledQuantity / demand.quantityNeeded) * 100}%`,
-                              }}
-                            />
-                          </div>
-                          <span className="text-xs font-medium text-gray-700">
-                            {demand.fulfilledQuantity}/{demand.quantityNeeded}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600 flex items-center gap-1">
+                      <ShoppingBag className="w-3.5 h-3.5" /> Orders Completed
+                    </span>
+                    <span className="text-sm font-medium">
+                      {demand.buyerProfile.totalOrdersCompleted}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Trust Tier</span>
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getTrustTierColor(demand.buyerProfile.trustTier)}`}>
+                      {demand.buyerProfile.trustTier}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600 flex items-center gap-1">
+                      <Target className="w-3.5 h-3.5" /> Fulfillment Progress
+                    </span>
+                    <span className="text-sm font-medium">
+                      {demand.fulfilledQuantity}/{demand.quantityNeeded}
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-green-500 h-2 rounded-full transition-all"
+                      style={{ width: `${Math.min((demand.fulfilledQuantity / demand.quantityNeeded) * 100, 100)}%` }}
+                    />
                   </div>
                 </div>
 
-                <div className="mt-6 pt-4 border-t border-gray-100">
+                <div className="mt-4 pt-4 border-t border-gray-100">
                   <Link
-                    href={`/admin/users/${demand.buyerProfile.id}`}
+                    href={`/admin/users/${demand.buyerProfile.userId}`}
                     className="block w-full text-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
                   >
                     View Full Profile

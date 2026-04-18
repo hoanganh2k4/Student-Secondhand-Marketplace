@@ -14,7 +14,9 @@ export interface User {
   status: UserStatus;
   createdAt: string;
   orderCount?: number;
-  rating?: number;
+  buyerProfile?: { buyerRating?: number | null };
+  sellerProfile?: { sellerRating?: number | null };
+  _count?: { buyerOrders: number; sellerOrders: number };
 }
 
 interface UsersTableProps {
@@ -129,14 +131,20 @@ export default function UsersTable({ users, onUserAction }: UsersTableProps) {
                   {new Date(user.createdAt).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {user.orderCount || 0}
+                  {user._count ? user._count.buyerOrders + user._count.sellerOrders : 0}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <span className="text-sm text-gray-900">
-                      {user.rating || 0}
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-gray-500">
+                      Buyer: <span className="font-medium text-gray-900">
+                        {user.buyerProfile?.buyerRating != null ? Number(user.buyerProfile.buyerRating).toFixed(1) : "0.0"}
+                      </span> ★
                     </span>
-                    <span className="text-xs text-gray-500 ml-1">★</span>
+                    <span className="text-xs text-gray-500">
+                      Seller: <span className="font-medium text-gray-900">
+                        {user.sellerProfile?.sellerRating != null ? Number(user.sellerProfile.sellerRating).toFixed(1) : "0.0"}
+                      </span> ★
+                    </span>
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
