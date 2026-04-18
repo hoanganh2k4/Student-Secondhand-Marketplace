@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config'
 import { PrismaService } from '../prisma/prisma.service'
 import { MailService } from '../mail/mail.service'
 import * as bcrypt from 'bcrypt'
+import * as jwt from 'jsonwebtoken'
 import type { JwtPayload } from './strategies/jwt.strategy'
 import type { RegisterDto, OnboardingDto } from './dto/auth.dto'
 
@@ -17,7 +18,7 @@ import type { RegisterDto, OnboardingDto } from './dto/auth.dto'
 export class AuthService {
   constructor(
     private prisma:  PrismaService,
-    private jwt:     JwtService,
+    private jwtSvc:  JwtService,
     private mail:    MailService,
     private config:  ConfigService,
   ) {}
@@ -41,7 +42,7 @@ export class AuthService {
   async sendMagicLink(email: string) {
     this.validateDomain(email)
 
-    const token = this.jwt.sign(
+    const token = this.jwtSvc.sign(
       { sub: email, email, type: 'magic_link' } satisfies Omit<JwtPayload, 'sub'> & { sub: string },
       { expiresIn: this.config.get('MAGIC_LINK_EXPIRES_IN', '15m') },
     )
@@ -53,7 +54,7 @@ export class AuthService {
   async verifyMagicLink(token: string) {
     let payload: any
     try {
-      payload = this.jwt.verify(token)
+      payload = this.jwtSvc.verify(token)
     } catch {
       throw new UnauthorizedException('Invalid or expired magic link.')
     }
@@ -68,18 +69,18 @@ export class AuthService {
     const existingUser = await this.prisma.user.findUnique({ where: { email } })
     const needsOnboarding = !existingUser
 
-    // If user exists, issue access token immediately
     if (existingUser) {
       return {
         accessToken:     this.issueAccessToken(existingUser.id, existingUser.email),
+        refreshToken:    this.issueRefreshToken(existingUser.id, existingUser.email),
         needsOnboarding: false,
         hasPassword:     !!(existingUser.passwordHash),
         user:            existingUser,
       }
     }
 
-    // New user — issue a short-lived onboarding token (not a full access token)
-    const onboardingToken = this.jwt.sign(
+    // New user — issue onboarding token only (no refresh token yet)
+    const onboardingToken = this.jwtSvc.sign(
       { sub: email, email, type: 'magic_link' },
       { expiresIn: '1h' },
     )
@@ -115,7 +116,8 @@ export class AuthService {
     })
 
     return {
-      accessToken: this.issueAccessToken(user.id, user.email),
+      accessToken:  this.issueAccessToken(user.id, user.email),
+      refreshToken: this.issueRefreshToken(user.id, user.email),
       user,
     }
   }
@@ -128,8 +130,36 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials.')
 
     return {
-      accessToken: this.issueAccessToken(user.id, user.email),
+      accessToken:  this.issueAccessToken(user.id, user.email),
+      refreshToken: this.issueRefreshToken(user.id, user.email),
       user,
+    }
+  }
+
+  // ─── Refresh token ───────────────────────────────────────────────────────────
+
+  async refresh(refreshToken: string) {
+    let payload: any
+    try {
+      payload = jwt.verify(
+        refreshToken,
+        this.config.get('JWT_REFRESH_SECRET', 'dev-refresh-secret'),
+      )
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token.')
+    }
+
+    if (payload.type !== 'refresh') {
+      throw new UnauthorizedException('Invalid token type.')
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } })
+    if (!user) throw new UnauthorizedException('User not found.')
+
+    // Rotate: issue new pair
+    return {
+      accessToken:  this.issueAccessToken(user.id, user.email),
+      refreshToken: this.issueRefreshToken(user.id, user.email),
     }
   }
 
@@ -139,7 +169,8 @@ export class AuthService {
     const existing = await this.prisma.user.findUnique({ where: { email } })
     if (existing) {
       return {
-        accessToken: this.issueAccessToken(existing.id, existing.email),
+        accessToken:  this.issueAccessToken(existing.id, existing.email),
+        refreshToken: this.issueRefreshToken(existing.id, existing.email),
         user: existing,
       }
     }
@@ -161,7 +192,8 @@ export class AuthService {
     })
 
     return {
-      accessToken: this.issueAccessToken(user.id, user.email),
+      accessToken:  this.issueAccessToken(user.id, user.email),
+      refreshToken: this.issueRefreshToken(user.id, user.email),
       user,
     }
   }
@@ -191,8 +223,15 @@ export class AuthService {
 
   private issueAccessToken(userId: string, email: string) {
     const payload: JwtPayload = { sub: userId, email, type: 'access' }
-    return this.jwt.sign(payload, {
-      expiresIn: this.config.get('JWT_EXPIRES_IN', '7d'),
+    return this.jwtSvc.sign(payload, {
+      expiresIn: this.config.get('JWT_EXPIRES_IN', '15m'),
     })
+  }
+
+  private issueRefreshToken(userId: string, email: string) {
+    const secret  = this.config.get<string>('JWT_REFRESH_SECRET')     ?? 'dev-refresh-secret'
+    const expires = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return jwt.sign({ sub: userId, email, type: 'refresh' }, secret, { expiresIn: expires as any })
   }
 }

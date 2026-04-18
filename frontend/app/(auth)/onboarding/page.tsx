@@ -62,8 +62,12 @@ export default function OnboardingPage() {
       return
     }
 
-    const { accessToken } = await res.json()
-    await fetch(`/auth/set-cookie?token=${encodeURIComponent(accessToken)}`)
+    const { accessToken, refreshToken } = await res.json()
+    await fetch('/auth/set-cookie', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ accessToken, refreshToken }),
+    })
     setDone(true)
     setTimeout(() => router.push('/profile/set-password'), 1200)
   }

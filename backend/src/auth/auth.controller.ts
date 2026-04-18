@@ -145,6 +145,22 @@ export class AuthController {
     return this.authService.login(dto.email, dto.password)
   }
 
+  @Post('refresh')
+  @ApiOperation({ summary: 'Refresh access token using refresh token' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['refreshToken'],
+      properties: { refreshToken: { type: 'string' } },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'New access + refresh token pair', schema: { example: { accessToken: 'eyJ...', refreshToken: 'eyJ...' } } })
+  @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+  refresh(@Body('refreshToken') refreshToken: string) {
+    if (!refreshToken) throw new UnauthorizedException('refreshToken is required.')
+    return this.authService.refresh(refreshToken)
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get current authenticated user' })
