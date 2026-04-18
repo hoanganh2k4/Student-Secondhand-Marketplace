@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Send, Loader2, ShoppingBag,
-  CheckCircle2, XCircle, Paperclip, X, Play,
+  CheckCircle2, XCircle, Paperclip, X, Play, LogOut,
 } from 'lucide-react'
 import { useConversationSocket } from '@/hooks/useConversationSocket'
 
@@ -210,6 +210,8 @@ export default function ConversationThreadPage() {
 
   const [pendingMedia,   setPendingMedia]   = useState<PendingMedia | null>(null)
   const [uploadingMedia, setUploadingMedia] = useState(false)
+  const [abandoning,       setAbandoning]       = useState(false)
+  const [showWalkAwayDialog, setShowWalkAwayDialog] = useState(false)
 
   // ── Load ────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -246,11 +248,14 @@ export default function ConversationThreadPage() {
       })
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     },
-    order_request_created: () => load(),   // reload full conv to get orderRequests
+    order_request_created: () => load(),
     order_request_updated: () => load(),
     order_created: (d: any) => {
       load()
       router.push(`/orders/${d.orderId}`)
+    },
+    conversation_abandoned: () => {
+      setConv((prev: any) => prev ? { ...prev, status: 'closed', stage: 'closed', closeReason: 'abandoned' } : prev)
     },
   })
 
@@ -292,6 +297,18 @@ export default function ConversationThreadPage() {
       if (res.ok) { setText(''); clearPendingMedia() }
       // WS pushes the message — no need to reload
     } finally { setSending(false); setUploadingMedia(false) }
+  }
+
+  // ── Walk away (abandon conversation) ─────────────────────────────────────
+  async function confirmWalkAway() {
+    setShowWalkAwayDialog(false)
+    setAbandoning(true)
+    try {
+      const res = await fetch(`/api/proxy/conversations/${id}/abandon`, { method: 'POST' })
+      if (res.ok) {
+        setConv((prev: any) => prev ? { ...prev, status: 'closed', stage: 'closed', closeReason: 'abandoned' } : prev)
+      }
+    } finally { setAbandoning(false) }
   }
 
   // ── Order request actions ────────────────────────────────────────────────
@@ -539,13 +556,59 @@ export default function ConversationThreadPage() {
                 Order
               </button>
             )}
+
+            {/* Walk away button */}
+            <button onClick={() => setShowWalkAwayDialog(true)} disabled={abandoning}
+              className="flex-shrink-0 flex items-center gap-1.5 h-10 px-3 bg-white border border-[#FCA5A5] text-[#DC2626] rounded-full text-[12px] font-medium whitespace-nowrap hover:bg-[#FEF2F2] disabled:opacity-50 transition-colors">
+              {abandoning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
+              Walk Away
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Walk Away confirmation dialog */}
+      {showWalkAwayDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-[#FEF2F2] flex items-center justify-center flex-shrink-0">
+                <LogOut className="w-5 h-5 text-[#DC2626]" />
+              </div>
+              <h2 className="text-[16px] font-semibold text-[#111827]">Walk Away?</h2>
+            </div>
+            <p className="text-[13px] text-[#6B7280] mb-5">
+              Are you sure you want to end this conversation? The match will be marked as failed and cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowWalkAwayDialog(false)}
+                className="flex-1 h-11 border border-[#D1D5DB] rounded-xl text-[14px] font-medium text-[#374151] hover:bg-[#F9FAFB] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmWalkAway}
+                className="flex-1 h-11 bg-[#DC2626] hover:bg-[#B91C1C] text-white rounded-xl text-[14px] font-semibold transition-colors"
+              >
+                Walk Away
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {conv.status === 'closed' && (
-        <div className="border-t border-[#E5E7EB] px-4 py-3 bg-[#F9FAFB] text-center text-[13px] text-[#6B7280]">
-          This conversation is closed.
+        <div className={`border-t px-4 py-3 text-center text-[13px] ${
+          conv.closeReason === 'abandoned'
+            ? 'border-[#FCA5A5] bg-[#FEF2F2] text-[#DC2626]'
+            : 'border-[#E5E7EB] bg-[#F9FAFB] text-[#6B7280]'
+        }`}>
+          {conv.closeReason === 'abandoned'
+            ? 'This conversation was ended — match marked as failed.'
+            : conv.closeReason === 'completed'
+            ? 'Conversation closed — order completed.'
+            : 'This conversation is closed.'}
         </div>
       )}
     </div>

@@ -7,10 +7,11 @@ const WS_URL = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api')
 type Handler = (data: any) => void
 
 interface EventMap {
-  new_message:           Handler
-  order_request_created: Handler
-  order_request_updated: Handler
-  order_created:         Handler
+  new_message:             Handler
+  order_request_created:   Handler
+  order_request_updated:   Handler
+  order_created:           Handler
+  conversation_abandoned:  Handler
 }
 
 export function useConversationSocket(
@@ -46,10 +47,11 @@ export function useConversationSocket(
         socket?.emit('join_conversation', conversationId)
       })
 
-      socket.on('new_message',           (d) => handlersRef.current.new_message?.(d))
-      socket.on('order_request_created', (d) => handlersRef.current.order_request_created?.(d))
-      socket.on('order_request_updated', (d) => handlersRef.current.order_request_updated?.(d))
-      socket.on('order_created',         (d) => handlersRef.current.order_created?.(d))
+      socket.on('new_message',            (d) => handlersRef.current.new_message?.(d))
+      socket.on('order_request_created',  (d) => handlersRef.current.order_request_created?.(d))
+      socket.on('order_request_updated',  (d) => handlersRef.current.order_request_updated?.(d))
+      socket.on('order_created',          (d) => handlersRef.current.order_created?.(d))
+      socket.on('conversation_abandoned', (d) => handlersRef.current.conversation_abandoned?.(d))
     }
 
     connect()
