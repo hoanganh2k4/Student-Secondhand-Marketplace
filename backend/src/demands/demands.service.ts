@@ -64,7 +64,7 @@ export class DemandsService {
 
     return this.prisma.demandRequest.findMany({
       where:   { buyerProfileId: buyerProfile.id },
-      include: { matches: { select: { id: true, matchScore: true, matchConfidence: true, status: true } } },
+      include: { matches: { where: { status: { notIn: ['closed_failed', 'closed_success'] } }, select: { id: true, matchScore: true, matchConfidence: true, status: true } } },
       orderBy: { createdAt: 'desc' },
     })
   }
@@ -72,7 +72,7 @@ export class DemandsService {
   async findOne(userId: string, id: string) {
     const demand = await this.prisma.demandRequest.findUnique({
       where: { id },
-      include: { matches: true },
+      include: { matches: { where: { status: { notIn: ['closed_failed', 'closed_success'] } } } },
     })
     if (!demand) throw new NotFoundException('Demand not found.')
 
@@ -117,9 +117,20 @@ export class DemandsService {
     const demand = await this.findOne(userId, id)
     const nextStatus = transitionDemand(demand.status, 'cancelled')
 
-    return this.prisma.demandRequest.update({
-      where: { id },
-      data: { status: nextStatus },
-    })
+    await this.prisma.$transaction([
+      this.prisma.demandRequest.update({
+        where: { id },
+        data:  { status: nextStatus },
+      }),
+      this.prisma.match.updateMany({
+        where: {
+          demandRequestId: id,
+          status: { notIn: ['closed_failed', 'closed_success'] },
+        },
+        data: { status: 'closed_failed' },
+      }),
+    ])
+
+    return { id, status: nextStatus }
   }
 }

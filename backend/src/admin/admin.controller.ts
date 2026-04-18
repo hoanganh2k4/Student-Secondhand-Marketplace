@@ -37,6 +37,13 @@ export class AdminController {
     return this.adminService.listDisputes()
   }
 
+  @Get('disputes/:id')
+  @ApiOperation({ summary: 'Get dispute details', description: 'Admin only. Returns dispute with order and parties info.' })
+  @ApiParam({ name: 'id', description: 'Dispute ID' })
+  getDispute(@Param('id') id: string) {
+    return this.adminService.getDispute(id)
+  }
+
   @Patch('disputes/:id/resolve')
   @ApiOperation({ summary: 'Resolve a dispute', description: 'Admin only. Sets resolution and marks dispute as resolved.' })
   @ApiResponse({
@@ -77,6 +84,13 @@ export class AdminController {
   })
   listUsers(@Query('status') status?: string) {
     return this.adminService.listUsers(status)
+  }
+
+  @Get('users/:id')
+  @ApiOperation({ summary: 'Get user details', description: 'Admin only. Returns user profile with orders and disputes.' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  getUser(@Param('id') id: string) {
+    return this.adminService.getUser(id)
   }
 
   @Patch('users/:id/suspend')
@@ -185,6 +199,13 @@ listDemands(
   @ApiParam({ name: 'id', description: 'Demand ID' })
   getDemand(@Param('id') id: string) {
     return this.adminService.getDemand(id)
+  }
+
+  @Patch('demands/:id/remove')
+  @ApiOperation({ summary: 'Remove a demand (admin action)', description: 'Admin only. Cancels the demand and closes all related matches.' })
+  @ApiParam({ name: 'id', description: 'Demand ID' })
+  removeDemand(@Param('id') id: string) {
+    return this.adminService.removeDemand(id)
   }
 
   // ─── ORDERS ───────────────────────────────────────────────────────────────

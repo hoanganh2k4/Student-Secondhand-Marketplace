@@ -18,6 +18,31 @@ export class AdminService {
     })
   }
 
+  async getDispute(disputeId: string) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      include: {
+        filedBy: { select: { id: true, name: true, email: true } },
+        order: {
+          select: {
+            id: true,
+            finalPrice: true,
+            status: true,
+            buyer:  { select: { id: true, name: true, email: true } },
+            seller: { select: { id: true, name: true, email: true } },
+            match: {
+              select: {
+                productListing: { select: { id: true, title: true } },
+              },
+            },
+          },
+        },
+      },
+    })
+    if (!dispute) throw new NotFoundException('Dispute not found.')
+    return dispute
+  }
+
   async resolveDispute(adminId: string, disputeId: string, dto: ResolveDisputeDto) {
     const dispute = await this.prisma.dispute.findUnique({ where: { id: disputeId } })
     if (!dispute) throw new NotFoundException('Dispute not found.')
@@ -36,10 +61,46 @@ export class AdminService {
 
   // ─── USERS ────────────────────────────────────────────────────────────────
 
+  async getUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        studentProfile: true,
+        buyerProfile: { select: { buyerRating: true, totalOrdersCompleted: true, trustTier: true } },
+        sellerProfile: { select: { sellerRating: true, totalListingsCreated: true, totalOrdersCompleted: true } },
+        buyerOrders: {
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true, finalPrice: true, createdAt: true },
+        },
+        sellerOrders: {
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true, finalPrice: true, createdAt: true },
+        },
+        filedDisputes: {
+          take: 5,
+          orderBy: { openedAt: 'desc' },
+          select: { id: true, status: true, description: true, openedAt: true },
+        },
+        _count: {
+          select: { buyerOrders: true, sellerOrders: true, filedDisputes: true },
+        },
+      },
+    })
+    if (!user) throw new NotFoundException('User not found.')
+    return user
+  }
+
   async listUsers(status?: string) {
     return this.prisma.user.findMany({
       where:   status ? { status: status as any } : undefined,
-      select:  { id: true, name: true, email: true, status: true, createdAt: true },
+      select: {
+        id: true, name: true, email: true, status: true, createdAt: true,
+        buyerProfile:  { select: { buyerRating: true } },
+        sellerProfile: { select: { sellerRating: true } },
+        _count: { select: { buyerOrders: true, sellerOrders: true } },
+      },
       orderBy: { createdAt: 'desc' },
     })
   }
@@ -137,7 +198,12 @@ export class AdminService {
         category: { select: { id: true, name: true } },
         sellerProfile: {
           include: {
-            user: { select: { id: true, name: true, email: true } },
+            user: {
+              select: {
+                id: true, name: true, email: true,
+                buyerProfile: { select: { buyerRating: true } },
+              },
+            },
           },
         },
         proofAssets: {
@@ -178,9 +244,11 @@ export class AdminService {
       proofAssets: listing.proofAssets,
       sellerProfile: {
         id: listing.sellerProfile.id,
+        userId: listing.sellerProfile.user.id,
         name: listing.sellerProfile.user.name,
         email: listing.sellerProfile.user.email,
         sellerRating: listing.sellerProfile.sellerRating,
+        buyerRating: listing.sellerProfile.user.buyerProfile?.buyerRating ?? null,
         totalOrdersCompleted: listing.sellerProfile.totalOrdersCompleted,
         trustTier: listing.sellerProfile.trustTier,
       },
@@ -197,10 +265,37 @@ export class AdminService {
   async removeListing(listingId: string) {
     const listing = await this.prisma.productListing.findUnique({ where: { id: listingId } });
     if (!listing) throw new NotFoundException('Listing not found.');
-    return this.prisma.productListing.update({
-      where: { id: listingId },
-      data:  { status: 'removed' },
-    });
+
+    await this.prisma.$transaction([
+      this.prisma.productListing.update({ where: { id: listingId }, data: { status: 'removed' } }),
+      this.prisma.match.updateMany({
+        where: {
+          productListingId: listingId,
+          status: { notIn: ['closed_failed', 'closed_success'] },
+        },
+        data: { status: 'closed_failed' },
+      }),
+    ]);
+
+    return { id: listingId, status: 'removed' };
+  }
+
+  async removeDemand(demandId: string) {
+    const demand = await this.prisma.demandRequest.findUnique({ where: { id: demandId } });
+    if (!demand) throw new NotFoundException('Demand not found.');
+
+    await this.prisma.$transaction([
+      this.prisma.demandRequest.update({ where: { id: demandId }, data: { status: 'cancelled' } }),
+      this.prisma.match.updateMany({
+        where: {
+          demandRequestId: demandId,
+          status: { notIn: ['closed_failed', 'closed_success'] },
+        },
+        data: { status: 'closed_failed' },
+      }),
+    ]);
+
+    return { id: demandId, status: 'cancelled' };
   }
 
   // ─── DEMANDS ──────────────────────────────────────────────────────────────
@@ -273,7 +368,13 @@ export class AdminService {
         category: { select: { id: true, name: true } },
         buyerProfile: {
           include: {
-            user: { select: { id: true, name: true, email: true } },
+            user: {
+              select: {
+                id: true, name: true, email: true,
+                studentProfile: { select: { university: true } },
+                sellerProfile: { select: { sellerRating: true } },
+              },
+            },
           },
         },
         matches: {
@@ -308,11 +409,14 @@ export class AdminService {
       category: demand.category,
       buyerProfile: {
         id: demand.buyerProfile.id,
+        userId: demand.buyerProfile.user.id,
         name: demand.buyerProfile.user.name,
         email: demand.buyerProfile.user.email,
         trustTier: demand.buyerProfile.trustTier,
+        buyerRating: demand.buyerProfile.buyerRating,
+        sellerRating: demand.buyerProfile.user.sellerProfile?.sellerRating ?? null,
         totalOrdersCompleted: demand.buyerProfile.totalOrdersCompleted,
-        university: demand.buyerProfile.defaultLocation,
+        university: demand.buyerProfile.user.studentProfile?.university ?? null,
       },
       matches: demand.matches.map((match) => ({
         id: match.id,

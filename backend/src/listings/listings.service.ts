@@ -63,7 +63,7 @@ export class ListingsService {
       where:   { sellerProfileId: sellerProfile.id },
       include: {
         proofAssets: { select: { id: true, fileUrl: true, assetType: true }, orderBy: { createdAt: 'asc' } },
-        matches:     { select: { id: true, matchScore: true, matchConfidence: true, status: true } },
+        matches:     { where: { status: { notIn: ['closed_failed', 'closed_success'] } }, select: { id: true, matchScore: true, matchConfidence: true, status: true } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -72,7 +72,7 @@ export class ListingsService {
   async findOne(id: string) {
     const listing = await this.prisma.productListing.findUnique({
       where: { id },
-      include: { proofAssets: true, matches: true },
+      include: { proofAssets: true, matches: { where: { status: { notIn: ['closed_failed', 'closed_success'] } } } },
     })
     if (!listing) throw new NotFoundException('Listing not found.')
     return listing
@@ -137,10 +137,21 @@ export class ListingsService {
     const listing = await this.findOneOwned(userId, id)
     const nextStatus = transitionListing(listing.status, 'removed')
 
-    return this.prisma.productListing.update({
-      where: { id },
-      data: { status: nextStatus },
-    })
+    await this.prisma.$transaction([
+      this.prisma.productListing.update({
+        where: { id },
+        data:  { status: nextStatus },
+      }),
+      this.prisma.match.updateMany({
+        where: {
+          productListingId: id,
+          status: { notIn: ['closed_failed', 'closed_success'] },
+        },
+        data: { status: 'closed_failed' },
+      }),
+    ])
+
+    return { id, status: nextStatus }
   }
 
   // ─── LISTING IMAGES ───────────────────────────────────────────────────────
