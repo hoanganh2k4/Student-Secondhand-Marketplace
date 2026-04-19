@@ -145,7 +145,21 @@ enum OrderRequestStatus {
   rejected
   seller_filled
   buyer_filled
+  awaiting_payment
   completed
+}
+
+enum PaymentGateway {
+  momo
+  vnpay
+}
+
+enum PaymentStatus {
+  pending
+  success
+  failed
+  refunded
+  released
 }
 
 enum DisputeType {
@@ -228,6 +242,7 @@ model User {
   offersCreated             Offer[]
   orderRequestsInitiated    OrderRequest[]    @relation("OrderRequestsInitiated")
   matchInteractions         MatchInteraction[]
+  walletTransactions        WalletTransaction[]
 
   @@map("users")
 }
@@ -271,6 +286,7 @@ model SellerProfile {
   trustTier            TrustTier @default(new) @map("trust_tier")
   preferredMeetupZones String[]  @map("preferred_meetup_zones")
   availabilityNotes    String?   @map("availability_notes")
+  balance              Int       @default(0)
 
   user            User             @relation(fields: [userId], references: [id])
   productListings ProductListing[]
@@ -499,6 +515,7 @@ model OrderRequest {
 
   conversation Conversation @relation(fields: [conversationId], references: [id])
   initiatedBy  User         @relation("OrderRequestsInitiated", fields: [initiatedByUserId], references: [id])
+  payment      Payment?
 
   @@map("order_requests")
 }
@@ -592,10 +609,51 @@ model Order {
   match         Match          @relation(fields: [matchId], references: [id])
   buyer         User           @relation("BuyerOrder", fields: [buyerUserId], references: [id])
   seller        User           @relation("SellerOrder", fields: [sellerUserId], references: [id])
-  ratingReviews RatingReview[]
-  dispute       Dispute?
+  ratingReviews      RatingReview[]
+  dispute            Dispute?
+  payment            Payment?
+  walletTransactions WalletTransaction[]
 
   @@map("orders")
+}
+
+model Payment {
+  id             String         @id @default(uuid())
+  orderRequestId String         @unique @map("order_request_id")
+  orderId        String?        @unique @map("order_id")
+  gateway        PaymentGateway
+  amount         Int
+  status         PaymentStatus  @default(pending)
+  gatewayTxId    String?        @map("gateway_tx_id")
+  gatewayOrderId String         @unique @map("gateway_order_id")
+  paymentUrl     String?        @map("payment_url")
+  rawCallback    Json?          @map("raw_callback")
+  paidAt         DateTime?      @map("paid_at")
+  releasedAt     DateTime?      @map("released_at")
+  refundedAt     DateTime?      @map("refunded_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  orderRequest OrderRequest @relation(fields: [orderRequestId], references: [id])
+  order        Order?       @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  orderId     String?  @map("order_id")
+  type        String
+  amount      Int
+  balance     Int
+  description String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user  User   @relation(fields: [userId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@map("wallet_transactions")
 }
 
 // ─── POST-TRANSACTION ─────────────────────────────────────────────────────────
