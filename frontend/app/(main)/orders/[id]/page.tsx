@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Loader2, CheckCircle, AlertTriangle, Star } from 'lucide-react'
+import { ArrowLeft, Loader2, CheckCircle, AlertTriangle, Star, ShieldCheck, Wallet } from 'lucide-react'
 import { useOrderSocket } from '@/hooks/useOrderSocket'
 
 const STATUS_STEP: Record<string, number> = {
@@ -29,9 +29,10 @@ const STATUS_COLOR: Record<string, string> = {
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router  = useRouter()
-  const [order,    setOrder]    = useState<any>(null)
-  const [myId,     setMyId]     = useState<string>('')
-  const [loading,  setLoading]  = useState(true)
+  const [order,      setOrder]      = useState<any>(null)
+  const [payment,    setPayment]    = useState<any>(null)
+  const [myId,       setMyId]       = useState<string>('')
+  const [loading,    setLoading]    = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [rating,   setRating]   = useState(0)
   const [comment,  setComment]  = useState('')
@@ -45,7 +46,15 @@ export default function OrderDetailPage() {
       fetch(`/api/proxy/orders/${id}`),
       fetch('/api/proxy/auth/me'),
     ])
-    if (orderRes.ok) setOrder(await orderRes.json())
+    if (orderRes.ok) {
+      const o = await orderRes.json()
+      setOrder(o)
+      // Fetch linked payment
+      if (o.id) {
+        const pRes = await fetch(`/api/proxy/payments/by-order/${o.id}`)
+        if (pRes.ok) setPayment(await pRes.json())
+      }
+    }
     if (meRes.ok) { const me = await meRes.json(); setMyId(me.id) }
     setLoading(false)
   }
@@ -213,6 +222,33 @@ export default function OrderDetailPage() {
             </div>
           )}
         </div>
+
+        {/* Escrow status */}
+        {payment && (
+          <div className={`rounded-xl border p-4 flex items-start gap-3 ${
+            payment.status === 'released'
+              ? 'bg-[#F0FDF4] border-[#86EFAC]'
+              : payment.status === 'success'
+              ? 'bg-[#EFF6FF] border-[#BFDBFE]'
+              : 'bg-[#F9FAFB] border-[#E5E7EB]'
+          }`}>
+            {payment.status === 'released'
+              ? <Wallet className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
+              : <ShieldCheck className="w-5 h-5 text-[#2563EB] flex-shrink-0 mt-0.5" />
+            }
+            <div>
+              <p className={`text-[13px] font-semibold ${payment.status === 'released' ? 'text-[#15803D]' : 'text-[#1D4ED8]'}`}>
+                {payment.status === 'released' ? 'Payment released to seller' : 'Payment held in escrow'}
+              </p>
+              <p className={`text-[12px] mt-0.5 ${payment.status === 'released' ? 'text-[#166534]' : 'text-[#3B82F6]'}`}>
+                {Number(payment.amount).toLocaleString()} ₫
+                {payment.status === 'released'
+                  ? ' has been added to seller wallet'
+                  : ' is held securely until both parties confirm completion'}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Confirmation status */}
         {['created', 'in_progress'].includes(order.status) && (

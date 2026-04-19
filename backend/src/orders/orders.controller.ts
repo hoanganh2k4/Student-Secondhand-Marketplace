@@ -52,6 +52,12 @@ export class OrdersController {
     return this.ordersService.list(req.user.id)
   }
 
+  @Get('wallet')
+  @ApiOperation({ summary: 'Get wallet balance and transaction history' })
+  wallet(@Request() req: any) {
+    return this.ordersService.getWallet(req.user.id)
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single order with full details' })
   @ApiResponse({ status: 200, description: 'Order with buyer/seller, match, offer, reviews, dispute', schema: { example: ORDER_EXAMPLE } })

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   Settings, Star, Package, Search, Shield, LogOut,
-  ImageIcon, Clock, Target, ShoppingBag,
+  ImageIcon, Clock, Target, ShoppingBag, Wallet,
 } from 'lucide-react'
 
 const STATUS_COLOR_LISTING: Record<string, string> = {
@@ -31,20 +31,25 @@ export default function ProfilePage() {
   const [listings, setListings] = useState<any[]>([])
   const [demands,  setDemands]  = useState<any[]>([])
   const [orders,   setOrders]   = useState<any[]>([])
+  const [wallet,   setWallet]   = useState<{ seller: { balance: number; transactions: any[] }; buyer: { totalPaid: number; transactions: any[] } } | null>(null)
   const [loading,  setLoading]  = useState(true)
 
   const load = useCallback(async () => {
-    const [userRes, listingsRes, demandsRes, ordersRes] = await Promise.all([
-      fetch('/api/proxy/auth/me'),
+    // Load auth/me first so its Set-Cookie (refresh) is applied before parallel calls
+    const userRes = await fetch('/api/proxy/auth/me')
+    if (!userRes.ok) { router.replace('/auth/login'); return }
+    setUser(await userRes.json())
+
+    const [listingsRes, demandsRes, ordersRes, walletRes] = await Promise.all([
       fetch('/api/proxy/listings'),
       fetch('/api/proxy/demands'),
       fetch('/api/proxy/orders'),
+      fetch('/api/proxy/orders/wallet'),
     ])
-    if (!userRes.ok) { router.replace('/auth/login'); return }
-    setUser(await userRes.json())
     if (listingsRes.ok) setListings(await listingsRes.json())
     if (demandsRes.ok)  setDemands(await demandsRes.json())
     if (ordersRes.ok)   setOrders(await ordersRes.json())
+    if (walletRes.ok)   setWallet(await walletRes.json())
     setLoading(false)
   }, [router])
 
@@ -71,7 +76,7 @@ export default function ProfilePage() {
   const recentDemands  = demands.slice(0, 3)
 
   async function signOut() {
-    await fetch('/auth/logout')
+    await fetch('/api/auth/logout', { method: 'POST' })
     router.replace('/auth/login')
   }
 
@@ -135,6 +140,63 @@ export default function ProfilePage() {
             <p className="text-[10px] text-[#6B7280] leading-tight mt-0.5">Active Demands</p>
           </div>
         </div>
+
+        {/* Wallets */}
+        {wallet !== null && (
+          <div className="space-y-3">
+            {/* Buyer wallet — show if user has buyer profile */}
+            {user.buyerProfile && (
+              <div className="rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-[#6B7280]" />
+                    <p className="text-[13px] font-semibold text-[#374151]">Buyer — Total Paid</p>
+                  </div>
+                  <p className="text-[16px] font-bold text-[#111827]">{wallet.buyer.totalPaid.toLocaleString()} ₫</p>
+                </div>
+                {wallet.buyer.transactions.length > 0 && (
+                  <div className="space-y-1.5">
+                    {wallet.buyer.transactions.slice(0, 3).map((t: any) => (
+                      <div key={t.id} className="flex items-center justify-between text-[12px]">
+                        <span className="text-[#6B7280] truncate flex-1">{t.description}</span>
+                        <span className="font-semibold ml-2 flex-shrink-0 text-[#DC2626]">
+                          -{t.amount.toLocaleString()} ₫
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Seller wallet — always show if user has seller profile */}
+            {user.sellerProfile && (
+              <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-[#2563EB]" />
+                    <p className="text-[13px] font-semibold text-[#1D4ED8]">Seller — Available Balance</p>
+                  </div>
+                  <p className="text-[16px] font-bold text-[#1D4ED8]">{wallet.seller.balance.toLocaleString()} ₫</p>
+                </div>
+                {wallet.seller.transactions.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {wallet.seller.transactions.slice(0, 3).map((t: any) => (
+                      <div key={t.id} className="flex items-center justify-between text-[12px]">
+                        <span className="text-[#374151] truncate flex-1">{t.description}</span>
+                        <span className="font-semibold ml-2 flex-shrink-0 text-[#16A34A]">
+                          +{t.amount.toLocaleString()} ₫
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-[#3B82F6]">No transactions yet. Complete an order to receive payment.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* My Listings */}
         <div>

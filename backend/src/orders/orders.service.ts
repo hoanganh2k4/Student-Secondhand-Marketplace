@@ -60,6 +60,31 @@ export class OrdersService {
     return order
   }
 
+  // ─── WALLET ───────────────────────────────────────────────────────────────
+
+  async getWallet(userId: string) {
+    const [sellerProfile, transactions] = await Promise.all([
+      this.prisma.sellerProfile.findUnique({ where: { userId }, select: { balance: true } }),
+      this.prisma.walletTransaction.findMany({
+        where:   { userId },
+        orderBy: { createdAt: 'desc' },
+        take:    20,
+      }),
+    ])
+
+    const sellerBalance  = sellerProfile?.balance ?? 0
+    const totalPaid      = transactions
+      .filter(t => t.type === 'payment')
+      .reduce((s, t) => s + t.amount, 0)
+    const sellerTx = transactions.filter(t => t.type !== 'payment')
+    const buyerTx  = transactions.filter(t => t.type === 'payment')
+
+    return {
+      seller: { balance: sellerBalance, transactions: sellerTx },
+      buyer:  { totalPaid, transactions: buyerTx },
+    }
+  }
+
   // ─── CONFIRM ──────────────────────────────────────────────────────────────
 
   async confirm(userId: string, orderId: string) {
@@ -235,12 +260,12 @@ export class OrdersService {
 
     // Increment order counters on buyer/seller profiles
     await this.prisma.buyerProfile.updateMany({
-      where:  { userId: order.buyerUserId },
-      data:   { totalOrdersCompleted: { increment: 1 } },
+      where: { userId: order.buyerUserId },
+      data:  { totalOrdersCompleted: { increment: 1 } },
     })
     await this.prisma.sellerProfile.updateMany({
-      where:  { userId: order.sellerUserId },
-      data:   { totalOrdersCompleted: { increment: 1 } },
+      where: { userId: order.sellerUserId },
+      data:  { totalOrdersCompleted: { increment: 1 } },
     })
 
     // Update fulfilled quantity on the related demand
@@ -250,12 +275,58 @@ export class OrdersService {
         where: { id: match.demandRequestId },
         data:  { fulfilledQuantity: { increment: order.quantity } },
       })
-      // Reduce listing's remaining quantity
       await this.prisma.productListing.update({
         where: { id: match.productListingId },
         data:  { quantityRemaining: { decrement: order.quantity } },
       })
     }
+
+    // Release escrow payment to seller wallet
+    await this.releaseEscrow(order)
+  }
+
+  private async releaseEscrow(order: any) {
+    const payment = await this.prisma.payment.findUnique({ where: { orderId: order.id } })
+    if (!payment || payment.status !== 'success') return
+
+    const amount = payment.amount
+
+    // Get current seller balance
+    const sellerProfile = await this.prisma.sellerProfile.findUnique({ where: { userId: order.sellerUserId } })
+    if (!sellerProfile) return
+    const newBalance = sellerProfile.balance + amount
+
+    await this.prisma.$transaction([
+      // Mark payment as released
+      this.prisma.payment.update({
+        where: { id: payment.id },
+        data:  { status: 'released', releasedAt: new Date() },
+      }),
+      // Credit seller wallet
+      this.prisma.sellerProfile.update({
+        where: { userId: order.sellerUserId },
+        data:  { balance: newBalance },
+      }),
+      // Log wallet transaction
+      this.prisma.walletTransaction.create({
+        data: {
+          userId:      order.sellerUserId,
+          orderId:     order.id,
+          type:        'credit',
+          amount,
+          balance:     newBalance,
+          description: `Payment released for order #${order.id.slice(0, 8)}`,
+        },
+      }),
+    ])
+
+    await this.notifications.notify(
+      order.sellerUserId,
+      'payment_released',
+      `${amount.toLocaleString()} ₫ has been released to your wallet.`,
+      'order',
+      order.id,
+    )
   }
 
   private async updateProfileRating(userId: string, role: 'buyer' | 'seller') {
