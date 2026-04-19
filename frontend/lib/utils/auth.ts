@@ -3,10 +3,8 @@ import { cookies } from 'next/headers'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api'
 
-/**
- * Server Component helper — fetches current user from NestJS using the JWT cookie.
- * Redirects to /login if the token is missing or invalid.
- */
+// Middleware already handles token refresh before the request reaches here.
+// This function just reads the (already-valid) access_token set by middleware.
 export async function requireAuthOrRedirect() {
   const cookieStore = await cookies()
   const token = cookieStore.get('access_token')?.value

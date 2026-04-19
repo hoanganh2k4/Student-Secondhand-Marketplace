@@ -32,6 +32,18 @@ async function doRefresh(refreshToken: string): Promise<{ accessToken: string; r
   }
 }
 
+function jwtExpiresInMs(token: string): number {
+  try {
+    // JWT uses Base64URL — replace URL-safe chars before decoding
+    const base64url = token.split('.')[1]
+    const base64    = base64url.replace(/-/g, '+').replace(/_/g, '/')
+    const payload   = JSON.parse(Buffer.from(base64, 'base64').toString('utf-8'))
+    return payload.exp ? payload.exp * 1000 - Date.now() : 0
+  } catch {
+    return 0
+  }
+}
+
 async function proxyRequest(request: NextRequest, params: { path: string[] }) {
   const cookieStore  = await cookies()
   let accessToken    = cookieStore.get('access_token')?.value
@@ -44,8 +56,8 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
     if (buf.byteLength > 0) body = Buffer.from(buf)
   }
 
-  const path     = params.path.join('/')
-  const url      = `${API_URL}/${path}${request.nextUrl.search}`
+  const path        = params.path.join('/')
+  const url         = `${API_URL}/${path}${request.nextUrl.search}`
   const contentType = request.headers.get('content-type') ?? ''
 
   const makeBackendRequest = (token: string) => {
@@ -68,8 +80,10 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
     })
   }
 
-  // No access token — try refresh immediately
-  if (!accessToken) {
+  // Proactively refresh if token is missing or expires within 30 seconds
+  const tokenExpiresSoon = !accessToken || jwtExpiresInMs(accessToken) < 30_000
+
+  if (tokenExpiresSoon) {
     if (!refreshToken) return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
     const newTokens = await doRefresh(refreshToken)
     if (!newTokens) return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
@@ -78,10 +92,10 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
     return buildResponse(backendRes, newTokens)
   }
 
-  // Try with existing access token
-  const backendRes = await makeBackendRequest(accessToken)
+  // Try with existing access token (guaranteed defined since tokenExpiresSoon was false)
+  const backendRes = await makeBackendRequest(accessToken!)
 
-  // Auto-refresh on 401
+  // Fallback: refresh on 401 (handles clock skew)
   if (backendRes.status === 401 && refreshToken) {
     const newTokens = await doRefresh(refreshToken)
     if (!newTokens) return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
