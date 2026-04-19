@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Send, Loader2, ShoppingBag,
-  CheckCircle2, XCircle, Paperclip, X, Play, LogOut,
+  CheckCircle2, XCircle, Paperclip, X, Play, LogOut, CreditCard, Clock,
 } from 'lucide-react'
 import { useConversationSocket } from '@/hooks/useConversationSocket'
 
@@ -27,11 +27,12 @@ interface BuyerForm   { phone: string; email: string; deliveryAddress: string; f
 function OrderRequestCard({
   orderRequest,
   myUserId,
-  iAmSeller,         // true = I am the seller, false = I am the buyer
+  iAmSeller,
   onAccept,
   onReject,
   onSellerFill,
   onBuyerFill,
+  onInitiatePayment,
 }: {
   orderRequest: any
   myUserId: string
@@ -40,6 +41,7 @@ function OrderRequestCard({
   onReject: () => void
   onSellerFill: (f: SellerForm) => Promise<void>
   onBuyerFill:  (f: BuyerForm)  => Promise<void>
+  onInitiatePayment: (gateway: 'momo' | 'vnpay') => Promise<void>
 }
 ) {
   const iAmInitiator = myUserId === orderRequest.initiatedByUserId
@@ -47,8 +49,9 @@ function OrderRequestCard({
   const [buyerForm,  setBuyerForm]  = useState<BuyerForm>({
     phone: '', email: '', deliveryAddress: '', fulfillmentMethod: 'delivery',
   })
-  const [submitting, setSubmitting] = useState(false)
-  const [formError,  setFormError]  = useState<string | null>(null)
+  const [submitting,      setSubmitting]      = useState(false)
+  const [formError,       setFormError]       = useState<string | null>(null)
+  const [payingGateway,   setPayingGateway]   = useState<'momo' | 'vnpay' | null>(null)
 
   const status = orderRequest.status as string
 
@@ -182,6 +185,48 @@ function OrderRequestCard({
         {!iAmSeller && status === 'buyer_filled' && (
           <p className="text-[13px] text-[#6B7280] text-center py-1">Delivery info filled. Waiting for seller to confirm price…</p>
         )}
+
+        {/* ── AWAITING PAYMENT ─────────────────────────────────────── */}
+        {status === 'awaiting_payment' && iAmSeller && (
+          <div className="flex flex-col items-center gap-2 py-2">
+            <Clock className="w-5 h-5 text-[#D97706]" />
+            <p className="text-[13px] text-[#6B7280] text-center">Waiting for buyer to complete payment…</p>
+          </div>
+        )}
+        {status === 'awaiting_payment' && !iAmSeller && (() => {
+          const total = Number(orderRequest.price) * (orderRequest.quantity ?? 1)
+          async function handlePay(gateway: 'momo' | 'vnpay') {
+            setPayingGateway(gateway)
+            setFormError(null)
+            try { await onInitiatePayment(gateway) }
+            catch (e: any) { setFormError(e?.message ?? 'Payment failed.') }
+            finally { setPayingGateway(null) }
+          }
+          return (
+            <div className="space-y-3">
+              <div className="bg-[#EFF6FF] rounded-xl px-3 py-2.5 flex items-center justify-between">
+                <span className="text-[13px] text-[#374151]">Total amount</span>
+                <span className="text-[15px] font-bold text-[#2563EB]">{total.toLocaleString()} ₫</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handlePay('momo')}
+                  disabled={!!payingGateway}
+                  className="flex-1 flex flex-col items-center gap-1.5 py-3 border-2 border-[#A50064] rounded-xl hover:bg-[#FDF4FF] disabled:opacity-60 transition-colors"
+                >
+                  {payingGateway === 'momo'
+                    ? <Loader2 className="w-5 h-5 text-[#A50064] animate-spin" />
+                    : <CreditCard className="w-5 h-5 text-[#A50064]" />
+                  }
+                  <span className="text-[12px] font-semibold text-[#A50064]">MoMo</span>
+                </button>
+                {/* VNPay temporarily disabled */}
+                {/* <button onClick={() => handlePay('vnpay')} ... >VNPay</button> */}
+              </div>
+              {formError && <p className="text-[12px] text-[#DC2626] text-center">{formError}</p>}
+            </div>
+          )
+        })()}
 
         {/* ── COMPLETED ────────────────────────────────────────────── */}
         {status === 'completed' && (
@@ -336,6 +381,21 @@ export default function ConversationThreadPage() {
     }
   }
 
+  async function initiatePayment(requestId: string, gateway: 'momo' | 'vnpay') {
+    const res = await fetch('/api/proxy/payments/initiate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderRequestId: requestId, gateway }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      const msg = Array.isArray(err.message) ? err.message.join(', ') : (err.message ?? 'Payment initiation failed.')
+      throw new Error(msg)
+    }
+    const { paymentUrl } = await res.json()
+    window.location.href = paymentUrl
+  }
+
   async function buyerFillInfo(requestId: string, form: BuyerForm) {
     const res = await fetch(`/api/proxy/conversations/order-requests/${requestId}/buyer-info`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -372,7 +432,7 @@ export default function ConversationThreadPage() {
   const orderRequestsById: Record<string, any> = {}
   for (const or of conv.orderRequests ?? []) orderRequestsById[or.id] = or
 
-  // Active order request (pending/accepted/filling)
+  // Active order request (pending/accepted/filling/awaiting_payment)
   const activeOrderRequest = (conv.orderRequests ?? []).find(
     (or: any) => !['rejected', 'completed'].includes(or.status)
   )
@@ -438,6 +498,7 @@ export default function ConversationThreadPage() {
             const requestId = m.body.replace('__order_request:', '').replace('__', '')
             const or = orderRequestsById[requestId]
             if (!or) return null
+            if (!myId) return null
             return (
               <OrderRequestCard
                 key={m.id}
@@ -448,6 +509,7 @@ export default function ConversationThreadPage() {
                 onReject={() => respondOrderRequest(or.id, 'reject')}
                 onSellerFill={(f) => sellerFillInfo(or.id, f)}
                 onBuyerFill={(f)  => buyerFillInfo(or.id, f)}
+                onInitiatePayment={(g) => initiatePayment(or.id, g)}
               />
             )
           }

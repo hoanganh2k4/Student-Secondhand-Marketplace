@@ -248,7 +248,7 @@ export class ConversationsService {
       throw new UnprocessableEntityException('Order request must be accepted first.')
     }
 
-    const newStatus = orderRequest.status === 'buyer_filled' ? 'completed' : 'seller_filled'
+    const newStatus = orderRequest.status === 'buyer_filled' ? 'awaiting_payment' : 'seller_filled'
 
     const updated = await this.prisma.orderRequest.update({
       where: { id: requestId },
@@ -257,8 +257,9 @@ export class ConversationsService {
 
     this.gateway.emit(orderRequest.conversationId, 'order_request_updated', updated)
 
-    if (newStatus === 'completed') {
-      await this.finalizeOrder(updated, conv)
+    if (newStatus === 'awaiting_payment') {
+      const buyerId = conv.buyerUserId
+      await this.notifications.notify(buyerId, 'payment_required', 'Vui lòng thanh toán để hoàn tất đơn hàng.', 'conversation', conv.id)
     }
 
     return updated
@@ -277,7 +278,7 @@ export class ConversationsService {
       throw new UnprocessableEntityException('Order request must be accepted first.')
     }
 
-    const newStatus = orderRequest.status === 'seller_filled' ? 'completed' : 'buyer_filled'
+    const newStatus = orderRequest.status === 'seller_filled' ? 'awaiting_payment' : 'buyer_filled'
 
     const updated = await this.prisma.orderRequest.update({
       where: { id: requestId },
@@ -292,14 +293,14 @@ export class ConversationsService {
 
     this.gateway.emit(orderRequest.conversationId, 'order_request_updated', updated)
 
-    if (newStatus === 'completed') {
-      await this.finalizeOrder(updated, conv)
+    if (newStatus === 'awaiting_payment') {
+      await this.notifications.notify(conv.buyerUserId, 'payment_required', 'Vui lòng thanh toán để hoàn tất đơn hàng.', 'conversation', conv.id)
     }
 
     return updated
   }
 
-  private async finalizeOrder(orderRequest: any, conv: any) {
+  async finalizeOrder(orderRequest: any, conv: any) {
     const quantity = orderRequest.quantity ?? 1
     const price    = Number(orderRequest.price)
     const total    = price * quantity
