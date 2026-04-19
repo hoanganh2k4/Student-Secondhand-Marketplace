@@ -1,7 +1,7 @@
 -- CreateTable: match_snapshots
 CREATE TABLE "match_snapshots" (
-    "id"                UUID         NOT NULL DEFAULT gen_random_uuid(),
-    "match_id"          UUID         NOT NULL,
+    "id"                TEXT         NOT NULL DEFAULT gen_random_uuid()::text,
+    "match_id"          TEXT         NOT NULL,
     "model_version"     TEXT         NOT NULL DEFAULT 'v1',
     "rank_position"     INTEGER      NOT NULL,
     "candidate_set_size" INTEGER     NOT NULL,
@@ -19,10 +19,10 @@ CREATE TABLE "match_snapshots" (
 
 -- CreateTable: match_interactions
 CREATE TABLE "match_interactions" (
-    "id"          UUID        NOT NULL DEFAULT gen_random_uuid(),
-    "match_id"    UUID        NOT NULL,
-    "snapshot_id" UUID,
-    "user_id"     UUID        NOT NULL,
+    "id"          TEXT        NOT NULL DEFAULT gen_random_uuid()::text,
+    "match_id"    TEXT        NOT NULL,
+    "snapshot_id" TEXT,
+    "user_id"     TEXT        NOT NULL,
     "action"      TEXT        NOT NULL,
     "surface"     TEXT,
     "session_id"  TEXT,
@@ -34,7 +34,7 @@ CREATE TABLE "match_interactions" (
 
 -- CreateTable: ai_match_logs
 CREATE TABLE "ai_match_logs" (
-    "id"               UUID        NOT NULL DEFAULT gen_random_uuid(),
+    "id"               TEXT        NOT NULL DEFAULT gen_random_uuid()::text,
     "triggered_by"     TEXT        NOT NULL,
     "source_id"        TEXT        NOT NULL,
     "source_text"      TEXT        NOT NULL,
@@ -48,7 +48,7 @@ CREATE TABLE "ai_match_logs" (
 
 -- CreateTable: ai_call_logs
 CREATE TABLE "ai_call_logs" (
-    "id"          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    "id"          TEXT        NOT NULL DEFAULT gen_random_uuid()::text,
     "endpoint"    TEXT        NOT NULL,
     "input_data"  JSONB       NOT NULL,
     "output_data" JSONB,
